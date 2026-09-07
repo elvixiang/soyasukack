@@ -899,6 +899,7 @@ function esc(s){return s.replace(/'/g,"\\'").replace(/"/g,'&quot;');}
 // HTML-escape utk teks yg diketik user (nama barang manual) sebelum masuk innerHTML.
 function mEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 var _priceMap=null;
+var LOADING='<div class="hg-wrap"><div class="hourglass"></div><div class="hg-txt">Memuat...</div></div>';
 // =========================================================
 // DASHBOARD
 // =========================================================
