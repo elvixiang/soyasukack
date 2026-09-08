@@ -746,12 +746,15 @@ var NAV_DEFS = {
     {id:'absensi',ico:'🕐',lbl:'Absensi',sec:'Operasional'},
     {id:'wastage',ico:'🗑️',lbl:'Wastage',sec:''},
     {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
+    {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
   ],
   Kepala:[
     {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
     {id:'absensi',ico:'🕐',lbl:'Absensi',sec:'Operasional'},
     {id:'wastage',ico:'🗑️',lbl:'Wastage (input)',sec:''},
     {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
+    {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
+    {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:'Monitoring'},
     {id:'izin-approval',ico:'📝',lbl:'Persetujuan',sec:'Monitoring'},
     {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
     {id:'overtime-rekap',ico:'⏱️',lbl:'Rekap Overtime',sec:''},
@@ -763,6 +766,7 @@ var NAV_DEFS = {
     {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
     {id:'overtime-rekap',ico:'⏱️',lbl:'Rekap Overtime',sec:''},
     {id:'wastage-view',ico:'🗑️',lbl:'Wastage',sec:''},
+    {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
     {id:'payslip',ico:'🧾',lbl:'Generate Payslip',sec:'HR'},
     {id:'payslip-history',ico:'📄',lbl:'Riwayat Payslip',sec:''},
   ],
@@ -776,6 +780,7 @@ var NAV_DEFS = {
   Admin:[
     {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
     {id:'wastage-view',ico:'🗑️',lbl:'Wastage',sec:'Monitoring'},
+    {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
   ]
 };
 
@@ -808,7 +813,7 @@ function buildNav(){
 function navigateTo(id){
   if(!canTab(id)){ id='dashboard'; }
   document.querySelectorAll('.ni').forEach(function(el){el.classList.toggle('active',el.dataset.id===id);});
-  var titles={dashboard:'Dashboard',absensi:'Absensi',wastage:'Wastage',so:'Stock Opname','wastage-view':'Wastage','cek-absensi':'Cek Absensi','overtime-rekap':'Rekap Overtime','izin-approval':'Persetujuan','payslip':'Generate Payslip','payslip-history':'Riwayat Payslip'};
+  var titles={dashboard:'Dashboard',absensi:'Absensi',wastage:'Wastage',so:'Stock Opname',inbound:'Inbound','inbound-view':'Cek Inbound','wastage-view':'Wastage','cek-absensi':'Cek Absensi','overtime-rekap':'Rekap Overtime','izin-approval':'Persetujuan','payslip':'Generate Payslip','payslip-history':'Riwayat Payslip'};
   document.getElementById('tb-title').textContent=titles[id]||id;
   renderPage(id);
 }
@@ -872,6 +877,8 @@ async function renderPage(id){
     case 'absensi':         await renderAbsensi(c); break;
     case 'wastage':         await renderWastage(c); break;
     case 'so':              await renderSO(c); break;
+    case 'inbound':         await renderInbound(c); break;
+    case 'inbound-view':    await renderInboundView(c); break;
     case 'wastage-view':    await renderWastageView(c); break;
     case 'cek-absensi':     await renderCekAbsensi(c); break;
     case 'overtime-rekap':  await renderOvertimeRekap(c); break;
@@ -941,6 +948,10 @@ async function renderDashboard(c){
     var ns=(sd.soToday||[]).length, tot=(sd.soList||[]).length;
     misi.push({id:'so',ico:'📦',lbl:'Stock Opname',sub:ns?(ns+' dari '+tot+' bahan'):'Belum di-opname',done:ns>0});
   }
+  if(canTab('inbound')){
+    var ni=Number(sd.inboundToday||0);
+    misi.push({id:'inbound',ico:'📥',lbl:'Inbound',sub:ni?(ni+' baris tercatat'):'Belum ada barang masuk',done:ni>0});
+  }
   if(misi.length){
     html+='<div class="sec">📋 Misi Hari Ini</div><div class="mission-grid">'+
       misi.map(function(m){
@@ -956,6 +967,7 @@ async function renderDashboard(c){
     var pend=NOTIF.kind==='approvals'?NOTIF.count:0;
     var hadir=Number(sd.absensiCount||0);
     var wCount=(sd.wastageToday||[]).length;
+    var iCount=Number(sd.inboundToday||0);
     var soDone=(sd.soToday||[]).length, soTot=(sd.soList||[]).length;
     html+='<div class="sec" style="margin-top:18px">📊 Ringkasan Hari Ini</div><div class="kpi-grid">'+
       (isApprover()?('<div class="kpi'+(pend?' dark':'')+'" style="cursor:pointer" onclick="navigateTo(\'izin-approval\')">'+
@@ -963,13 +975,14 @@ async function renderDashboard(c){
         '<div class="kpi-sub">'+(pend?'Perlu diputus':'Semua beres')+'</div></div>'):'')+
       '<div class="kpi"><div class="kpi-label">Hadir Hari Ini</div><div class="kpi-val">'+hadir+'</div><div class="kpi-sub">orang clock in</div></div>'+
       '<div class="kpi"><div class="kpi-label">Wastage Hari Ini</div><div class="kpi-val">'+wCount+'</div><div class="kpi-sub">item tercatat</div></div>'+
+      '<div class="kpi"><div class="kpi-label">Inbound Hari Ini</div><div class="kpi-val">'+iCount+'</div><div class="kpi-sub">baris tercatat</div></div>'+
       '<div class="kpi"><div class="kpi-label">Stock Opname</div><div class="kpi-val">'+soDone+'<span style="font-size:14px;color:var(--brown-soft)">/'+soTot+'</span></div><div class="kpi-sub">bahan di-opname</div></div>'+
     '</div>';
   }
 
   // ── Shortcut ──
   var short=[];
-  [['izin-approval','📝','Persetujuan'],['cek-absensi','🕐','Cek Absensi'],['overtime-rekap','⏱️','Rekap Overtime'],
+  [['inbound-view','🧾','Cek Inbound'],['izin-approval','📝','Persetujuan'],['cek-absensi','🕐','Cek Absensi'],['overtime-rekap','⏱️','Rekap Overtime'],
    ['wastage-view','🗑️','Lihat Wastage'],['payslip','🧾','Generate Payslip'],['payslip-history','📄','Riwayat Payslip']]
    .forEach(function(t){ if(canTab(t[0])) short.push(t); });
   if(short.length){
@@ -1281,6 +1294,199 @@ async function saveSO(){
   if(btn){btn.disabled=false;btn.textContent='Simpan Stock Opname';}
 }
 window.saveSO=saveSO;
+
+// =========================================================
+// INBOUND (staff input barang datang, satuan per PACK)
+// =========================================================
+var INB_ITEMS = [];
+
+async function renderInbound(c){
+  c.innerHTML=LOADING;
+  var sd=await loadStoreData(S.store);
+  var items=(sd&&sd.inbList)||[];
+  if(!items.length){
+    c.innerHTML='<div class="empty"><div class="ei">📥</div><div>Belum ada bahan di ING MASTER</div></div>';
+    return;
+  }
+  INB_ITEMS=items.map(function(it){return{name:it.name,unit:it.unit,fullPax:Number(it.fullPax)||0};});
+  var nToday=(sd&&sd.inboundToday)||0;
+  var note = nToday
+    ? '<div style="font-size:12.5px;color:var(--green);background:#F0FBF0;border:1px solid #B7E8C0;border-radius:8px;padding:9px 12px;margin-bottom:12px">✅ Hari ini sudah ada <b>'+nToday+' baris</b> inbound tercatat. Kalau ada kiriman lagi, isi lagi di bawah — tidak menimpa yang tadi.</div>'
+    : '<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.55">Isi <b>jumlah pack</b> yang datang. Bahan yang tidak datang, biarkan kosong. Tiap simpan = catatan baru, jadi kalau sehari ada 2 kiriman tinggal isi 2 kali.</div>';
+
+  c.innerHTML='<div class="card">'+
+  '<div class="card-title">📥 Inbound — Central Kitchen</div>'+
+  '<div class="form-grid">'+
+  '<div class="fg"><label>Tanggal Barang Datang</label><input class="fi2" type="date" id="inb-date" value="'+S.today+'" max="'+S.today+'"></div>'+
+  '<div class="fg"><label>Supplier <span style="font-weight:400;color:var(--brown-soft)">(opsional)</span></label><input class="fi2" id="inb-supplier" placeholder="mis. Toko Sinar Jaya" maxlength="80"></div>'+
+  '<div class="fg full"><label>Catatan <span style="font-weight:400;color:var(--brown-soft)">(opsional)</span></label><input class="fi2" id="inb-notes" placeholder="mis. kedelai agak basah" maxlength="200"></div>'+
+  '</div>'+
+  '<div style="margin-top:12px">'+note+'</div>'+
+  '<input class="fi2" id="inb-search" placeholder="🔍 Cari bahan..." oninput="inbFilter()" style="margin-bottom:10px">'+
+  '<div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="tbl" id="inb-tbl" style="min-width:520px">'+
+  '<thead><tr><th>#</th><th>Nama Bahan</th><th style="text-align:center">Pack</th><th style="text-align:right">Total</th></tr></thead>'+
+  '<tbody>'+INB_ITEMS.map(function(it,i){
+    var fp=it.fullPax, unit=it.unit||'';
+    var hint = fp>0
+      ? '<div style="font-size:11px;color:var(--brown-soft);font-weight:400">'+fp.toLocaleString('id-ID')+' '+unit+' / pack</div>'
+      : '<div style="font-size:11px;color:var(--brown-soft);font-weight:400">tanpa pack · satuan '+(unit||'pcs')+'</div>';
+    return '<tr id="inb-row-'+i+'" data-nm="'+mEsc(it.name).toLowerCase()+'">'+
+      '<td style="color:var(--brown-soft);font-size:12px">'+(i+1)+'</td>'+
+      '<td style="font-weight:600">'+mEsc(it.name)+hint+'</td>'+
+      '<td style="text-align:center"><input type="number" min="0" step="any" placeholder="0" id="inb-q-'+i+'" oninput="inbCalc('+i+')" style="width:70px;text-align:center"></td>'+
+      '<td style="text-align:right;font-weight:700;white-space:nowrap" id="inb-tot-'+i+'">—</td>'+
+    '</tr>';
+  }).join('')+'</tbody></table></div>'+
+  '<div class="row-actions"><button class="save-btn" onclick="saveInbound()">Simpan Inbound</button>'+
+  '<div id="inb-msg" class="save-msg"></div></div></div>';
+}
+window.renderInbound=renderInbound;
+
+function inbFilter(){
+  var q=(document.getElementById('inb-search').value||'').trim().toLowerCase();
+  INB_ITEMS.forEach(function(it,i){
+    var tr=document.getElementById('inb-row-'+i);
+    if(!tr) return;
+    var qEl=document.getElementById('inb-q-'+i);
+    var terisi=qEl&&qEl.value!==''&&Number(qEl.value)>0;
+    // Baris yang sudah diisi selalu ditampilkan, biar tidak "hilang" saat mencari.
+    tr.style.display=(!q||tr.getAttribute('data-nm').indexOf(q)>=0||terisi)?'':'none';
+  });
+}
+window.inbFilter=inbFilter;
+
+function inbCalc(i){
+  var it=INB_ITEMS[i]; if(!it) return;
+  var el=document.getElementById('inb-q-'+i);
+  var q=(el&&el.value!=='')?Number(el.value):0;
+  var out=document.getElementById('inb-tot-'+i);
+  if(!out) return;
+  if(!q){ out.textContent='—'; out.style.color=''; return; }
+  var fp=it.fullPax;
+  out.textContent=(fp>0?(q*fp):q).toLocaleString('id-ID')+' '+(it.unit||'');
+  out.style.color='var(--green)';
+}
+window.inbCalc=inbCalc;
+
+async function saveInbound(){
+  var btn=document.querySelector('#content .save-btn');
+  var msg=document.getElementById('inb-msg');
+  var items=[];
+  INB_ITEMS.forEach(function(it,i){
+    var el=document.getElementById('inb-q-'+i);
+    var q=(el&&el.value!=='')?Number(el.value):0;
+    if(q>0) items.push({name:it.name,unit:it.unit,qty:q});
+  });
+  if(!items.length){
+    if(msg){msg.textContent='❌ Belum ada bahan yang diisi qty-nya';msg.className='save-msg err';}
+    return;
+  }
+  if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
+  try{
+    var r=await api({action:'saveInbound',token:S.token,store:S.store,
+      date:document.getElementById('inb-date').value||S.today,
+      supplier:document.getElementById('inb-supplier').value||'',
+      notes:document.getElementById('inb-notes').value||'',
+      items:JSON.stringify(items)});
+    if(r.ok){
+      if(msg){msg.textContent='✅ Tersimpan! ('+r.saved+' bahan)';msg.className='save-msg ok';}
+      sdBust();
+      setTimeout(function(){ renderPage('inbound'); },1000);
+    } else if(msg){ msg.textContent='❌ '+(r.error||'Error');msg.className='save-msg err'; }
+  }catch(e){ if(msg){msg.textContent='❌ '+e.message;msg.className='save-msg err';} }
+  if(btn){btn.disabled=false;btn.textContent='Simpan Inbound';}
+}
+window.saveInbound=saveInbound;
+
+// =========================================================
+// CEK INBOUND (Owner / Admin) — nominal hanya utk yang berhak
+// =========================================================
+async function renderInboundView(c){
+  var d=new Date(S.today), first=new Date(d.getFullYear(),d.getMonth(),1);
+  function iso(x){ return x.toISOString().split('T')[0]; }
+  c.innerHTML='<div class="card">'+
+  '<div class="card-title">📥 Cek Inbound — Central Kitchen</div>'+
+  '<div class="form-grid">'+
+  '<div class="fg"><label>Dari Tanggal</label><input class="fi2" type="date" id="iv-from" value="'+iso(first)+'"></div>'+
+  '<div class="fg"><label>Sampai Tanggal</label><input class="fi2" type="date" id="iv-to" value="'+S.today+'"></div>'+
+  '</div>'+
+  '<div class="row-actions"><button class="save-btn" onclick="loadIV()">Tampilkan</button></div>'+
+  '</div><div id="iv-content"></div>';
+  loadIV();
+}
+window.renderInboundView=renderInboundView;
+
+async function loadIV(){
+  var box=document.getElementById('iv-content'); if(!box) return;
+  box.innerHTML=LOADING;
+  var from=document.getElementById('iv-from').value, to=document.getElementById('iv-to').value;
+  if(!from||!to){ box.innerHTML='<div class="empty"><div class="ei">📅</div><div>Pilih rentang tanggal dulu</div></div>'; return; }
+  try{
+    var r=await api({action:'getInboundRange',token:S.token,store:S.store,from:from,to:to});
+    if(!r.ok){ box.innerHTML='<div class="empty"><div class="ei">⚠️</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
+    var rows=r.data||[];
+    if(!rows.length){ box.innerHTML='<div class="empty"><div class="ei">📭</div><div>Tidak ada inbound di rentang ini</div></div>'; return; }
+    var showPrice=!!r.show_price;
+
+    // Ringkasan per bahan
+    var agg={};
+    rows.forEach(function(x){
+      var k=String(x.item_name).trim();
+      if(!agg[k]) agg[k]={name:k,unit:x.unit,pack:0,base:0,total:0};
+      agg[k].pack+=Number(x.qty_pack)||0;
+      agg[k].base+=Number(x.qty_base)||0;
+      agg[k].total+=Number(x.total)||0;
+    });
+    var sum=Object.keys(agg).map(function(k){return agg[k];});
+    sum.sort(function(a,b){ return showPrice?(b.total-a.total):String(a.name).localeCompare(String(b.name)); });
+    var grand=sum.reduce(function(t,x){return t+x.total;},0);
+
+    var html='<div class="card"><div class="card-title">📊 Ringkasan per Bahan</div>'+
+    (showPrice?'<div style="font-size:13px;color:var(--brown-soft);margin-bottom:10px">Total nilai barang masuk: <b style="color:var(--brown-deep);font-size:15px">Rp '+grand.toLocaleString('id-ID')+'</b></div>':'')+
+    '<div class="tbl-wrap" style="overflow-x:auto"><table class="tbl" style="min-width:'+(showPrice?'560':'440')+'px">'+
+    '<thead><tr><th>Bahan</th><th style="text-align:center">Pack</th><th style="text-align:right">Total Qty</th>'+
+    (showPrice?'<th style="text-align:right">Nilai</th>':'')+'</tr></thead><tbody>'+
+    sum.map(function(x){
+      return '<tr><td style="font-weight:600">'+mEsc(x.name)+'</td>'+
+        '<td style="text-align:center">'+x.pack.toLocaleString('id-ID')+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+x.base.toLocaleString('id-ID')+' '+mEsc(x.unit||'')+'</td>'+
+        (showPrice?('<td style="text-align:right;font-weight:700;white-space:nowrap">Rp '+x.total.toLocaleString('id-ID')+'</td>'):'')+
+      '</tr>';
+    }).join('')+'</tbody></table></div></div>';
+
+    // Detail per baris
+    var canDel=['Owner','Admin','Kepala'].indexOf(S.user.role)>=0;
+    html+='<div class="card"><div class="card-title">🧾 Detail ('+rows.length+' baris)</div>'+
+    '<div class="tbl-wrap" style="overflow-x:auto"><table class="tbl" style="min-width:'+(showPrice?'700':'600')+'px">'+
+    '<thead><tr><th>Tanggal</th><th>Bahan</th><th style="text-align:center">Pack</th><th style="text-align:right">Qty</th>'+
+    (showPrice?'<th style="text-align:right">Nilai</th>':'')+'<th>Supplier</th><th>Oleh</th>'+
+    (canDel?'<th></th>':'')+'</tr></thead><tbody>'+
+    rows.map(function(x){
+      return '<tr><td style="white-space:nowrap">'+fmtDateShort(x.date)+'</td>'+
+        '<td style="font-weight:600">'+mEsc(x.item_name)+
+          (x.notes?'<div style="font-size:11px;color:var(--brown-soft);font-weight:400">'+mEsc(x.notes)+'</div>':'')+'</td>'+
+        '<td style="text-align:center">'+Number(x.qty_pack).toLocaleString('id-ID')+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+Number(x.qty_base).toLocaleString('id-ID')+' '+mEsc(x.unit||'')+'</td>'+
+        (showPrice?('<td style="text-align:right;white-space:nowrap">Rp '+Number(x.total||0).toLocaleString('id-ID')+'</td>'):'')+
+        '<td>'+mEsc(x.supplier||'-')+'</td><td>'+mEsc(x.by||'-')+'</td>'+
+        (canDel?('<td><button class="ftab" style="padding:4px 9px;font-size:11px;color:var(--red)" onclick="delInbound('+x.row+',\''+mEsc(String(x.item_name)).replace(/'/g,"\\'")+'\',\''+x.date+'\')">Hapus</button></td>'):'')+
+      '</tr>';
+    }).join('')+'</tbody></table></div></div>';
+
+    box.innerHTML=html;
+  }catch(e){ box.innerHTML='<div class="empty"><div class="ei">⚠️</div><div>'+mEsc(e.message)+'</div></div>'; }
+}
+window.loadIV=loadIV;
+
+async function delInbound(row,name,date){
+  if(!confirm('Hapus inbound "'+name+'" tanggal '+date+'?')) return;
+  try{
+    var r=await api({action:'deleteInbound',token:S.token,store:S.store,row:row,item_name:name,date:date});
+    if(r.ok){ sdBust(); loadIV(); }
+    else alert('❌ '+(r.error||'Gagal menghapus'));
+  }catch(e){ alert('❌ '+e.message); }
+}
+window.delInbound=delInbound;
 
 // =========================================================
 // ABSENSI (Staff)
