@@ -543,7 +543,7 @@ function startApp(fresh){
   refreshNotif().then(function(){ if(fresh) greetNotif(); });
 }
 
-function roleLabel(r){ return r==='Kepala'?'Kepala CK':r; }
+function roleLabel(r){ return r==='Kepala'?'Kepala CK':r; }   // PIC & lainnya tampil apa adanya
 window.roleLabel=roleLabel;
 
 // ── NOTIFIKASI (lonceng) ──
@@ -555,7 +555,7 @@ function isApprover(){ return ['Kepala','Owner'].indexOf(S.user.role)>=0; }
 
 async function refreshNotif(){
   var bell=document.getElementById('bell');
-  var isStaff = ['Staff','Kepala'].indexOf(S.user.role)>=0;
+  var isStaff = ['Staff','Kepala','PIC'].indexOf(S.user.role)>=0;
   if(!isApprover() && !isStaff){ if(bell) bell.style.display='none'; return; }
   if(bell) bell.style.display='';
   try{
@@ -754,18 +754,26 @@ var NAV_DEFS = {
     {id:'wastage',ico:'🗑️',lbl:'Wastage (input)',sec:''},
     {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
     {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
-    {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:'Monitoring'},
     {id:'izin-approval',ico:'📝',lbl:'Persetujuan',sec:'Monitoring'},
     {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
     {id:'overtime-rekap',ico:'⏱️',lbl:'Rekap Overtime',sec:''},
-    {id:'wastage-view',ico:'🗑️',lbl:'Wastage (lihat)',sec:''},
+    {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:''},
+  ],
+  PIC:[
+    {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
+    {id:'absensi',ico:'🕐',lbl:'Absensi',sec:'Operasional'},
+    {id:'wastage',ico:'🗑️',lbl:'Wastage',sec:''},
+    {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
+    {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
+    {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:'Monitoring'},
+    {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:''},
   ],
   Owner:[
     {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
     {id:'izin-approval',ico:'📝',lbl:'Persetujuan',sec:'Monitoring'},
     {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
     {id:'overtime-rekap',ico:'⏱️',lbl:'Rekap Overtime',sec:''},
-    {id:'wastage-view',ico:'🗑️',lbl:'Wastage',sec:''},
+    {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:''},
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
     {id:'payslip',ico:'🧾',lbl:'Generate Payslip',sec:'HR'},
     {id:'payslip-history',ico:'📄',lbl:'Riwayat Payslip',sec:''},
@@ -779,7 +787,7 @@ var NAV_DEFS = {
   ],
   Admin:[
     {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
-    {id:'wastage-view',ico:'🗑️',lbl:'Wastage',sec:'Monitoring'},
+    {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:'Monitoring'},
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
   ]
 };
@@ -908,92 +916,74 @@ function mEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,
 var _priceMap=null;
 var LOADING='<div class="hg-wrap"><div class="hourglass"></div><div class="hg-txt">Memuat...</div></div>';
 // =========================================================
-// DASHBOARD
+// DASHBOARD — sengaja dibuat sederhana & tahan error.
+// Kalau data gagal dimuat, sapaan + menu tetap tampil dan
+// pesan error aslinya ditunjukkan (bukan spinner menggantung).
 // =========================================================
 async function renderDashboard(c){
   var u=S.user;
   var jam=Number(new Date(Date.now()+7*3600000).toISOString().substr(11,2));
   var sapa = jam<11?'Selamat pagi':(jam<15?'Selamat siang':(jam<18?'Selamat sore':'Selamat malam'));
 
+  var short=[];
+  [['absensi','🕐','Absensi'],['wastage','🗑️','Input Wastage'],['so','📦','Stock Opname'],
+   ['inbound','📥','Inbound'],['izin-approval','📝','Persetujuan'],['cek-absensi','🕐','Cek Absensi'],
+   ['overtime-rekap','⏱️','Rekap Overtime'],['wastage-view','🗑️','Cek Wastage'],
+   ['inbound-view','🧾','Cek Inbound'],['payslip','🧾','Generate Payslip'],
+   ['payslip-history','📄','Riwayat Payslip']]
+   .forEach(function(t){ if(canTab(t[0])) short.push(t); });
+
+  // Digambar duluan, tidak menunggu jaringan.
   c.innerHTML=
     '<div class="card" style="display:flex;align-items:center;gap:14px">'+
-      '<img src="'+POFU+'" alt="Pofu" style="width:70px;flex:none">'+
+      '<img src="'+POFU+'" alt="Pofu" style="width:66px;flex:none">'+
       '<div><div style="font-size:16px;font-weight:700;color:var(--brown-deep)">'+sapa+', '+mEsc(u.nickname||u.display_name)+'!</div>'+
       '<div style="font-size:12.5px;color:var(--brown-soft);margin-top:3px">Central Kitchen · '+fmtDate(S.today)+'</div></div>'+
     '</div>'+
-    '<div id="d-body"><div class="hg-wrap"><div class="hourglass"></div><div class="hg-txt">Memuat data…</div></div></div>';
+    '<div id="d-status"></div>'+
+    (short.length?('<div class="sec" style="margin-top:6px">⚡ Menu</div><div class="mission-grid">'+
+      short.map(function(t){
+        return '<div class="mission" onclick="navigateTo(\''+t[0]+'\')"><span class="mic">'+t[1]+'</span>'+
+          '<div><div class="ml">'+t[2]+'</div></div></div>';
+      }).join('')+'</div>'):'');
 
-  var body=document.getElementById('d-body');
-  var sd=null;
-  try{ sd=await loadStoreData(S.store); }catch(e){}
-  if(!sd||!sd.ok){ body.innerHTML='<div class="empty"><div class="ei">⚠️</div><div>Gagal memuat data. Coba refresh.</div></div>'; return; }
+  var box=document.getElementById('d-status');
+  if(!box) return;
+  box.innerHTML='<div class="card" style="padding:14px;font-size:13px;color:var(--brown-soft)">Memuat ringkasan hari ini…</div>';
 
-  var html='';
+  var sd=null, errMsg='';
+  try{ sd=await loadStoreData(S.store); }catch(e){ errMsg=e.message||String(e); }
+  if(!sd||!sd.ok){
+    box.innerHTML='<div class="card" style="padding:13px 15px;font-size:12.5px;line-height:1.6;'+
+      'background:#FFF6F4;border:1px solid #F3C9C0;color:#9A3A28">'+
+      '<b>Ringkasan hari ini belum bisa dimuat.</b><br>'+
+      (errMsg?('Pesan: '+mEsc(errMsg)+'<br>'):'')+
+      'Menu di bawah tetap bisa dipakai seperti biasa. '+
+      '<span style="text-decoration:underline;cursor:pointer" onclick="navigateTo(\'dashboard\')">Coba lagi</span></div>';
+    return;
+  }
 
-  // ── Misi harian (yang punya tab operasional) ──
-  var misi=[];
+  var bits=[];
   if(canTab('absensi')){
     var abs=sd.absensiToday||null;
     var ci=abs&&abs.clock_in_time?fmtTime(abs.clock_in_time):'';
     var co=abs&&abs.clock_out_time?fmtTime(abs.clock_out_time):'';
-    misi.push({id:'absensi',ico:'🕐',lbl:'Absensi',
-      sub: ci?('Masuk '+ci+(co?(' · Pulang '+co):' · belum pulang')):'Belum clock in',
-      done: !!ci});
+    bits.push({ico:'🕐',lbl:'Absensi',val: ci?(ci+(co?(' → '+co):' · belum pulang')):'Belum clock in',ok:!!ci,go:'absensi'});
   }
-  if(canTab('wastage')){
-    var nw=(sd.wastageToday||[]).length;
-    misi.push({id:'wastage',ico:'🗑️',lbl:'Wastage',sub:nw?(nw+' item tercatat'):'Belum ada input',done:nw>0});
-  }
-  if(canTab('so')){
-    var ns=(sd.soToday||[]).length, tot=(sd.soList||[]).length;
-    misi.push({id:'so',ico:'📦',lbl:'Stock Opname',sub:ns?(ns+' dari '+tot+' bahan'):'Belum di-opname',done:ns>0});
-  }
-  if(canTab('inbound')){
-    var ni=Number(sd.inboundToday||0);
-    misi.push({id:'inbound',ico:'📥',lbl:'Inbound',sub:ni?(ni+' baris tercatat'):'Belum ada barang masuk',done:ni>0});
-  }
-  if(misi.length){
-    html+='<div class="sec">📋 Misi Hari Ini</div><div class="mission-grid">'+
-      misi.map(function(m){
-        return '<div class="mission'+(m.done?' done':'')+'" onclick="navigateTo(\''+m.id+'\')">'+
-          '<span class="mic">'+m.ico+'</span>'+
-          '<div><div class="ml">'+m.lbl+'</div><div class="ms">'+m.sub+'</div></div>'+
-          (m.done?'<span class="mck">✓</span>':'')+'</div>';
-      }).join('')+'</div>';
-  }
+  if(canTab('wastage')) bits.push({ico:'🗑️',lbl:'Wastage',val:((sd.wastageToday||[]).length||0)+' item',ok:(sd.wastageToday||[]).length>0,go:'wastage'});
+  if(canTab('so'))      bits.push({ico:'📦',lbl:'Stock Opname',val:((sd.soToday||[]).length||0)+' / '+((sd.soList||[]).length||0)+' bahan',ok:(sd.soToday||[]).length>0,go:'so'});
+  if(canTab('inbound')) bits.push({ico:'📥',lbl:'Inbound',val:(Number(sd.inboundToday||0))+' catatan',ok:Number(sd.inboundToday||0)>0,go:'inbound'});
+  if(canTab('cek-absensi')) bits.push({ico:'👥',lbl:'Hadir hari ini',val:(Number(sd.absensiCount||0))+' orang',ok:Number(sd.absensiCount||0)>0,go:'cek-absensi'});
+  if(canTab('izin-approval')&&NOTIF.kind==='approvals') bits.push({ico:'📝',lbl:'Menunggu persetujuan',val:NOTIF.count+' pengajuan',ok:NOTIF.count===0,go:'izin-approval'});
 
-  // ── Ringkasan (approver / HR / Owner) ──
-  if(isApprover()||['HR','Admin'].indexOf(u.role)>=0){
-    var pend=NOTIF.kind==='approvals'?NOTIF.count:0;
-    var hadir=Number(sd.absensiCount||0);
-    var wCount=(sd.wastageToday||[]).length;
-    var iCount=Number(sd.inboundToday||0);
-    var soDone=(sd.soToday||[]).length, soTot=(sd.soList||[]).length;
-    html+='<div class="sec" style="margin-top:18px">📊 Ringkasan Hari Ini</div><div class="kpi-grid">'+
-      (isApprover()?('<div class="kpi'+(pend?' dark':'')+'" style="cursor:pointer" onclick="navigateTo(\'izin-approval\')">'+
-        '<div class="kpi-label">Menunggu Persetujuan</div><div class="kpi-val">'+pend+'</div>'+
-        '<div class="kpi-sub">'+(pend?'Perlu diputus':'Semua beres')+'</div></div>'):'')+
-      '<div class="kpi"><div class="kpi-label">Hadir Hari Ini</div><div class="kpi-val">'+hadir+'</div><div class="kpi-sub">orang clock in</div></div>'+
-      '<div class="kpi"><div class="kpi-label">Wastage Hari Ini</div><div class="kpi-val">'+wCount+'</div><div class="kpi-sub">item tercatat</div></div>'+
-      '<div class="kpi"><div class="kpi-label">Inbound Hari Ini</div><div class="kpi-val">'+iCount+'</div><div class="kpi-sub">baris tercatat</div></div>'+
-      '<div class="kpi"><div class="kpi-label">Stock Opname</div><div class="kpi-val">'+soDone+'<span style="font-size:14px;color:var(--brown-soft)">/'+soTot+'</span></div><div class="kpi-sub">bahan di-opname</div></div>'+
-    '</div>';
-  }
-
-  // ── Shortcut ──
-  var short=[];
-  [['inbound-view','🧾','Cek Inbound'],['izin-approval','📝','Persetujuan'],['cek-absensi','🕐','Cek Absensi'],['overtime-rekap','⏱️','Rekap Overtime'],
-   ['wastage-view','🗑️','Lihat Wastage'],['payslip','🧾','Generate Payslip'],['payslip-history','📄','Riwayat Payslip']]
-   .forEach(function(t){ if(canTab(t[0])) short.push(t); });
-  if(short.length){
-    html+='<div class="sec" style="margin-top:18px">⚡ Akses Cepat</div><div class="mission-grid">'+
-      short.map(function(t){
-        return '<div class="mission" onclick="navigateTo(\''+t[0]+'\')"><span class="mic">'+t[1]+'</span>'+
-          '<div><div class="ml">'+t[2]+'</div></div></div>';
-      }).join('')+'</div>';
-  }
-
-  body.innerHTML=html||'<div class="empty"><div class="ei">👋</div><div>Selamat datang di dashboard Central Kitchen</div></div>';
+  if(!bits.length){ box.innerHTML=''; return; }
+  box.innerHTML='<div class="sec">📋 Hari Ini</div><div class="mission-grid">'+
+    bits.map(function(b){
+      return '<div class="mission'+(b.ok?' done':'')+'" onclick="navigateTo(\''+b.go+'\')">'+
+        '<span class="mic">'+b.ico+'</span>'+
+        '<div><div class="ml">'+mEsc(b.lbl)+'</div><div class="ms">'+mEsc(b.val)+'</div></div>'+
+        (b.ok?'<span class="mck">✓</span>':'')+'</div>';
+    }).join('')+'</div>';
 }
 window.renderDashboard=renderDashboard;
 
@@ -1195,7 +1185,7 @@ window.loadWV=loadWV;
 async function renderSO(c){
   if(!ensureStore(c)) return;
   c.innerHTML=LOADING;
-  var sd=await loadStoreData(S.store);
+  var sd=await loadStoreData(S.store,null,true);   // paksa segar: angka SO harus akurat
   var soItems=(sd&&sd.soList)||[];
   if(!soItems.length){
     c.innerHTML='<div class="empty"><div class="ei">📦</div><div>Belum ada bahan yang ditandai perlu Stock Opname (kolom Need SO = YES di ING MASTER)</div></div>';
@@ -1288,6 +1278,7 @@ async function saveSO(){
       // update state tersimpan + kunci lagi
       var saved={}; items.forEach(function(it){saved[it.ingredient.trim()]=Number(it.actual_qty)||0;});
       window._soSaved=saved; window._soLocked=true;
+      sdBust();   // buang cache klien, biar refresh berikutnya ambil angka terbaru
       setTimeout(function(){ renderSOTable(SO_ITEMS); },900);
     } else { if(msg){msg.textContent='❌ '+(r.error||'Error');msg.className='save-msg err';} }
   }catch(e){var m=document.getElementById('so-msg');if(m){m.textContent='❌ '+e.message;m.className='save-msg err';}}
@@ -1302,17 +1293,15 @@ var INB_ITEMS = [];
 
 async function renderInbound(c){
   c.innerHTML=LOADING;
-  var sd=await loadStoreData(S.store);
+  var sd=await loadStoreData(S.store,null,true);
   var items=(sd&&sd.inbList)||[];
   if(!items.length){
-    c.innerHTML='<div class="empty"><div class="ei">📥</div><div>Belum ada bahan di ING MASTER</div></div>';
+    c.innerHTML='<div class="empty"><div class="ei">📥</div><div>Belum ada bahan yang boleh di-order.<br><span style=\'font-size:12px\'>Isi kolom <b>G (CAN ORDER)</b> di ING MASTER dengan <b>CAN</b> untuk bahan yang bisa masuk Inbound.</span></div></div>';
     return;
   }
   INB_ITEMS=items.map(function(it){return{name:it.name,unit:it.unit,fullPax:Number(it.fullPax)||0};});
-  var nToday=(sd&&sd.inboundToday)||0;
-  var note = nToday
-    ? '<div style="font-size:12.5px;color:var(--green);background:#F0FBF0;border:1px solid #B7E8C0;border-radius:8px;padding:9px 12px;margin-bottom:12px">✅ Hari ini sudah ada <b>'+nToday+' baris</b> inbound tercatat. Kalau ada kiriman lagi, isi lagi di bawah — tidak menimpa yang tadi.</div>'
-    : '<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.55">Isi <b>jumlah pack</b> yang datang. Bahan yang tidak datang, biarkan kosong. Tiap simpan = catatan baru, jadi kalau sehari ada 2 kiriman tinggal isi 2 kali.</div>';
+  window._inbLog=(sd&&sd.inboundList)||[];
+  var note='<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.55">Isi <b>jumlah pack</b> yang datang. Bahan yang tidak datang, biarkan kosong. Tiap simpan jadi catatan baru — kiriman berikutnya tinggal isi lagi, yang tadi tidak tertimpa.</div>';
 
   c.innerHTML='<div class="card">'+
   '<div class="card-title">📥 Inbound — Central Kitchen</div>'+
@@ -1338,8 +1327,50 @@ async function renderInbound(c){
     '</tr>';
   }).join('')+'</tbody></table></div>'+
   '<div class="row-actions"><button class="save-btn" onclick="saveInbound()">Simpan Inbound</button>'+
-  '<div id="inb-msg" class="save-msg"></div></div></div>';
+  '<div id="inb-msg" class="save-msg"></div></div></div>'+
+  '<div id="inb-log"></div>';
+  renderInbLog();
 }
+
+// Riwayat inbound HARI INI — supaya staff tahu apa yang sudah tercatat
+// sebelum menambah kiriman berikutnya.
+function renderInbLog(){
+  var box=document.getElementById('inb-log'); if(!box) return;
+  var log=window._inbLog||[];
+  if(!log.length){
+    box.innerHTML='<div class="card" style="padding:14px;font-size:12.5px;color:var(--brown-soft)">Belum ada inbound tercatat hari ini.</div>';
+    return;
+  }
+  // Kelompokkan per waktu simpan → 1 kelompok = 1 kali kiriman
+  var groups={}, order=[];
+  log.forEach(function(x){
+    var k=(x.at_raw||x.at||'')+'|'+(x.supplier||'');
+    if(!groups[k]){ groups[k]={at:x.at||'',supplier:x.supplier||'',by:x.by||'',notes:x.notes||'',items:[]}; order.push(k); }
+    groups[k].items.push(x);
+  });
+  order.reverse();   // kiriman terbaru di atas
+  box.innerHTML='<div class="card"><div class="card-title">📋 Inbound Hari Ini ('+order.length+' kali kiriman)</div>'+
+    order.map(function(k,gi){
+      var g=groups[k];
+      var jam=g.at?String(g.at).substr(11,5):'';
+      return '<div style="padding:10px 0'+(gi<order.length-1?';border-bottom:1px solid var(--line)':'')+'">'+
+        '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:5px">'+
+          '<div style="font-weight:700;font-size:13px">'+(jam?('🕐 '+jam):'Kiriman '+(order.length-gi))+
+            (g.supplier?(' · '+mEsc(g.supplier)):'')+'</div>'+
+          '<div style="font-size:11.5px;color:var(--brown-soft)">oleh '+mEsc(g.by||'-')+'</div>'+
+        '</div>'+
+        g.items.map(function(x){
+          return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:2px 0">'+
+            '<span>'+mEsc(x.item_name)+'</span>'+
+            '<span style="white-space:nowrap;color:var(--brown-soft)"><b style="color:var(--brown-deep)">'+
+              Number(x.qty_pack).toLocaleString('id-ID')+' pack</b> · '+
+              Number(x.qty_base).toLocaleString('id-ID')+' '+mEsc(x.unit||'')+'</span></div>';
+        }).join('')+
+        (g.notes?('<div style="font-size:11.5px;color:var(--brown-soft);margin-top:4px">📝 '+mEsc(g.notes)+'</div>'):'')+
+      '</div>';
+    }).join('')+'</div>';
+}
+window.renderInbLog=renderInbLog;
 window.renderInbound=renderInbound;
 
 function inbFilter(){
