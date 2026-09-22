@@ -549,105 +549,119 @@ function roleLabel(r){ return r==='Kepala'?'Kepala CK':r; }   // PIC & lainnya t
 window.roleLabel=roleLabel;
 
 // ── NOTIFIKASI (lonceng) ──
-// Staff  : keputusan izin / overtime / koreksi yang belum dilihat.
-// Kepala/Owner : pengajuan yang masih Pending.
-var NOTIF={count:0,izin:[],overtime:[],clockfix:[],kind:''};
+// Approval 2 tingkat: Staff → PIC → Kepala.
+//   appr = pengajuan yang HARUS kuputus (PIC: tahap 1, Kepala: tahap 2)
+//   dec  = keputusan AKHIR atas pengajuanku sendiri yang belum kulihat
+// PIC bisa punya dua-duanya. Kepala appr saja. Staff dec saja.
+var NOTIF={count:0,nAppr:0,nDec:0,
+  appr:{izin:[],overtime:[],clockfix:[]},
+  dec:{izin:[],overtime:[],clockfix:[]}};
 
-function isApprover(){ return ['Kepala','Owner'].indexOf(S.user.role)>=0; }
+function isApprover(){ return ['Kepala','PIC'].indexOf(S.user.role)>=0; }
+function isRequester(){ return ['Staff','PIC'].indexOf(S.user.role)>=0; }
 
-async function refreshNotif(){
+function setNotif(r){
+  if(!r||!r.ok) return;
+  var e={izin:[],overtime:[],clockfix:[]};
+  NOTIF={count:r.count||0,nAppr:r.nAppr||0,nDec:r.nDec||0,appr:r.appr||e,dec:r.dec||e};
+  renderNotifBadge();
   var bell=document.getElementById('bell');
-  var isStaff = ['Staff','Kepala','PIC'].indexOf(S.user.role)>=0;
-  if(!isApprover() && !isStaff){ if(bell) bell.style.display='none'; return; }
-  if(bell) bell.style.display='';
+  if(bell) bell.style.display=(isApprover()||isRequester())?'':'none';
+}
+
+function renderNotifBadge(){
+  var b=document.getElementById('bell-badge'); if(!b) return;
+  if(NOTIF.count>0){ b.textContent=NOTIF.count>99?'99+':NOTIF.count; b.style.display='flex'; }
+  else b.style.display='none';
+}
+window.renderNotifBadge=renderNotifBadge;
+
+// Notif yang datang menempel di respons getStoreData (hemat 1 request saat start).
+function renderNotifFrom(r){ setNotif(r); }
+window.renderNotifFrom=renderNotifFrom;
+
+// Selalu ambil dari server — dipanggil sesudah ada perubahan (mis. notif dibaca).
+async function refreshNotif(){
+  if(!isApprover()&&!isRequester()){
+    var bell=document.getElementById('bell'); if(bell) bell.style.display='none'; return;
+  }
   try{
-    // Kalau getStoreData baru saja membawa notif, pakai itu — hemat 1 request.
-    var r=(S.storeData&&S.storeData.notif)||null;
-    if(!r) r=await api({action:'getNotif',token:S.token,store:S.store});
-    if(!r||!r.ok) return;
-    NOTIF={count:r.count||0,izin:r.izin||[],overtime:r.overtime||[],clockfix:r.clockfix||[],kind:r.kind||''};
-    var b=document.getElementById('bell-badge');
-    if(b){
-      if(NOTIF.count>0){ b.textContent=NOTIF.count>99?'99+':NOTIF.count; b.style.display='flex'; }
-      else b.style.display='none';
-    }
+    var r=await api({action:'getNotif',token:S.token,store:S.store});
+    if(S.storeData) S.storeData.notif=r;   // jangan biarkan salinan lama muncul lagi
+    setNotif(r);
   }catch(e){}
 }
 window.refreshNotif=refreshNotif;
+
+function _decList(){ var d=NOTIF.dec; return (d.izin||[]).concat(d.overtime||[],d.clockfix||[]); }
+function _apprParts(){
+  var a=NOTIF.appr, parts=[];
+  if((a.izin||[]).length) parts.push(a.izin.length+' izin');
+  if((a.overtime||[]).length) parts.push(a.overtime.length+' overtime');
+  if((a.clockfix||[]).length) parts.push(a.clockfix.length+' koreksi absen');
+  return parts;
+}
+function _stageText(){ return S.user.role==='PIC'?'nunggu kamu cek (tahap 1)':'sudah lolos PIC, nunggu keputusanmu'; }
 
 // Popup sambutan Pofu — cuma muncul kalau memang ada notif.
 function greetNotif(){
   if(!NOTIF.count) return;
   var nama=S.user.nickname||S.user.display_name;
-  if(NOTIF.kind==='decisions'){
-    var decs=(NOTIF.izin||[]).concat(NOTIF.overtime||[],NOTIF.clockfix||[]);
-    var apr=decs.filter(function(z){return z.status==='Approved';}).length;
-    var rej=decs.length-apr;
-    var sub='Pengajuanmu '+
-      (apr?('<b style="color:var(--green)">'+apr+' disetujui</b>'):'')+
-      (apr&&rej?' · ':'')+
-      (rej?('<b style="color:var(--red)">'+rej+' ditolak</b>'):'');
-    showPopup('Halo, '+nama+'!',
-      '<div class="pofu-wrap"><img src="'+POFU+'" alt="Pofu">'+
-      '<div class="pofu-hl">Kamu ada '+NOTIF.count+' notifikasi!</div>'+
-      '<div class="pofu-sub">'+sub+'</div></div>'+
-      '<button class="save-btn" style="width:100%" onclick="closePopup();showMyDecisions()">📋 Cek Detail Pengajuan</button>'+
-      '<button class="ftab" style="width:100%;margin-top:8px;padding:9px" onclick="closePopup()">Nanti aja</button>');
-    return;
+  var lines=[], btns='';
+  if(NOTIF.nAppr){
+    lines.push('<b>'+NOTIF.nAppr+' pengajuan</b> ('+_apprParts().join(' · ')+') '+_stageText()+'.');
+    btns+='<button class="save-btn" style="width:100%" onclick="closePopup();navigateTo(\'izin-approval\')">📋 Buka Persetujuan</button>';
   }
-  if(NOTIF.kind==='approvals'){
-    var nIz=(NOTIF.izin||[]).length, nOt=(NOTIF.overtime||[]).length, nCf=(NOTIF.clockfix||[]).length;
-    var parts=[]; if(nIz)parts.push(nIz+' izin'); if(nOt)parts.push(nOt+' overtime'); if(nCf)parts.push(nCf+' koreksi absen');
-    showPopup('Halo, '+nama+'!',
-      '<div class="pofu-wrap"><img src="'+POFU+'" alt="Pofu">'+
-      '<div class="pofu-hl">'+NOTIF.count+' pengajuan menunggu!</div>'+
-      '<div class="pofu-sub">'+(parts.join(' · ')||'Ada pengajuan baru')+' dari tim CK nunggu keputusanmu.</div></div>'+
-      '<button class="save-btn" style="width:100%" onclick="closePopup();navigateTo(\'izin-approval\')">📋 Buka Persetujuan</button>'+
-      '<button class="ftab" style="width:100%;margin-top:8px;padding:9px" onclick="closePopup()">Nanti aja</button>');
+  if(NOTIF.nDec){
+    var decs=_decList();
+    var apr=decs.filter(function(z){return z.status==='Approved';}).length, rej=decs.length-apr;
+    lines.push('Pengajuanmu '+
+      (apr?('<b style="color:var(--green)">'+apr+' disetujui</b>'):'')+(apr&&rej?' · ':'')+
+      (rej?('<b style="color:var(--red)">'+rej+' ditolak</b>'):'')+'.');
+    btns+='<button class="save-btn" style="width:100%;margin-top:8px'+(NOTIF.nAppr?';background:var(--gold)':'')+'" onclick="closePopup();showMyDecisions()">📄 Lihat Keputusan Pengajuanku</button>';
   }
+  showPopup('Halo, '+nama+'!',
+    '<div class="pofu-wrap"><img src="'+POFU+'" alt="Pofu">'+
+    '<div class="pofu-hl">Kamu ada '+NOTIF.count+' notifikasi!</div>'+
+    '<div class="pofu-sub">'+lines.join('<br>')+'</div></div>'+btns+
+    '<button class="ftab" style="width:100%;margin-top:8px;padding:9px" onclick="closePopup()">Nanti aja</button>');
 }
 window.greetNotif=greetNotif;
 
-// Pasang data notif yang datang menempel di respons getStoreData.
-function renderNotifFrom(r){
-  if(!r||!r.ok) return;
-  NOTIF={count:r.count||0,izin:r.izin||[],overtime:r.overtime||[],clockfix:r.clockfix||[],kind:r.kind||''};
-  var b=document.getElementById('bell-badge');
-  if(b){
-    if(NOTIF.count>0){ b.textContent=NOTIF.count>99?'99+':NOTIF.count; b.style.display='flex'; }
-    else b.style.display='none';
-  }
-  var bell=document.getElementById('bell'); if(bell) bell.style.display='';
-}
-window.renderNotifFrom=renderNotifFrom;
-
 function openNotif(){
-  var body;
   if(!NOTIF.count){
-    body='<div class="empty" style="padding:26px"><div class="ei">🔕</div><div>Tidak ada notifikasi baru</div></div>';
-  } else if(NOTIF.kind==='decisions'){
-    function decRow(kind,label,z){
-      var col=z.status==='Approved'?'var(--green)':'var(--red)';
-      return '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'+
-        '<div style="font-weight:600;font-size:13px">'+label+' — '+mEsc(kind)+'</div>'+
-        '<div style="font-size:11.5px;color:var(--brown-soft)">'+fmtDateShort(z.date)+
-        ' · <b style="color:'+col+'">'+z.status+'</b>'+
-        (z.reject_reason?(' · '+mEsc(z.reject_reason)):'')+'</div></div>';
-    }
-    body=(NOTIF.izin||[]).map(function(z){return decRow(z.jenis,'Izin',z);}).join('')+
-      (NOTIF.overtime||[]).map(function(z){return decRow('Overtime '+z.hours+' jam','Overtime',z);}).join('')+
-      (NOTIF.clockfix||[]).map(function(z){return decRow('Koreksi '+(z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time,'Koreksi',z);}).join('')+
-      '<button class="save-btn" style="width:100%;margin-top:12px" onclick="closePopup();showMyDecisions()">📋 Cek Detail</button>';
-  } else {
+    showPopup('Notifikasi','<div class="empty" style="padding:26px"><div class="ei">🔕</div><div>Tidak ada notifikasi baru</div></div>');
+    return;
+  }
+  var body='';
+  if(NOTIF.nAppr){
+    var a=NOTIF.appr;
     function pendRow(label,extra){
       return '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'+
         '<div style="font-weight:600;font-size:13px">'+label+'</div>'+
         '<div style="font-size:11.5px;color:var(--brown-soft)">'+extra+'</div></div>';
     }
-    body=(NOTIF.izin||[]).map(function(z){return pendRow('📝 Izin — '+mEsc(z.display_name),mEsc(z.jenis)+' '+fmtDateShort(z.date));}).join('')+
-      (NOTIF.overtime||[]).map(function(z){return pendRow('⏱️ Overtime — '+mEsc(z.display_name),z.hours+' jam '+fmtDateShort(z.date));}).join('')+
-      (NOTIF.clockfix||[]).map(function(z){return pendRow('🔧 Koreksi — '+mEsc(z.display_name),(z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time+' '+fmtDateShort(z.date));}).join('')+
-      '<button class="save-btn" style="width:100%;margin-top:12px" onclick="closePopup();navigateTo(\'izin-approval\')">📋 Buka Persetujuan</button>';
+    body+='<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--brown-soft);margin-bottom:4px">Perlu kamu putus</div>'+
+      (a.izin||[]).map(function(z){return pendRow('📝 Izin — '+mEsc(z.display_name),mEsc(z.jenis)+' · '+fmtDateShort(z.date));}).join('')+
+      (a.overtime||[]).map(function(z){return pendRow('⏱️ Overtime — '+mEsc(z.display_name),z.hours+' jam · '+fmtDateShort(z.date));}).join('')+
+      (a.clockfix||[]).map(function(z){return pendRow('🔧 Koreksi — '+mEsc(z.display_name),(z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time+' · '+fmtDateShort(z.date));}).join('')+
+      '<button class="save-btn" style="width:100%;margin:12px 0 4px" onclick="closePopup();navigateTo(\'izin-approval\')">📋 Buka Persetujuan</button>';
+  }
+  if(NOTIF.nDec){
+    var d=NOTIF.dec;
+    function decRow(kind,label,z){
+      var ok=z.status==='Approved';
+      return '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'+
+        '<div style="font-weight:600;font-size:13px">'+label+' — '+mEsc(kind)+'</div>'+
+        '<div style="font-size:11.5px;color:var(--brown-soft)">'+fmtDateShort(z.date)+
+        ' · <b style="color:'+(ok?'var(--green)':'var(--red)')+'">'+(ok?'Disetujui':'Ditolak')+'</b>'+
+        (z.reject_reason?(' · '+mEsc(z.reject_reason)):'')+'</div></div>';
+    }
+    body+='<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--brown-soft);margin:'+(NOTIF.nAppr?'14px':'0')+' 0 4px">Keputusan pengajuanmu</div>'+
+      (d.izin||[]).map(function(z){return decRow(z.jenis,'Izin',z);}).join('')+
+      (d.overtime||[]).map(function(z){return decRow(z.hours+' jam','Overtime',z);}).join('')+
+      (d.clockfix||[]).map(function(z){return decRow((z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time,'Koreksi',z);}).join('')+
+      '<button class="save-btn" style="width:100%;margin-top:12px'+(NOTIF.nAppr?';background:var(--gold)':'')+'" onclick="closePopup();showMyDecisions()">📄 Cek Detail</button>';
   }
   showPopup('Notifikasi',body);
 }
@@ -768,8 +782,7 @@ var NAV_DEFS = {
   ],
   Kepala:[
     {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
-    {id:'absensi',ico:'🕐',lbl:'Absensi',sec:'Operasional'},
-    {id:'wastage',ico:'🗑️',lbl:'Wastage (input)',sec:''},
+    {id:'wastage',ico:'🗑️',lbl:'Wastage (input)',sec:'Operasional'},
     {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
     {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
     {id:'produksi',ico:'🏭',lbl:'Hasil Produksi',sec:''},
@@ -786,13 +799,13 @@ var NAV_DEFS = {
     {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
     {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
     {id:'produksi',ico:'🏭',lbl:'Hasil Produksi',sec:''},
-    {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:'Monitoring'},
+    {id:'izin-approval',ico:'📝',lbl:'Persetujuan',sec:'Monitoring'},
+    {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
     {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:''},
   ],
   Owner:[
     {id:'dashboard',ico:'🏠',lbl:'Dashboard',sec:''},
-    {id:'izin-approval',ico:'📝',lbl:'Persetujuan',sec:'Monitoring'},
-    {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
+    {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:'Monitoring'},
     {id:'overtime-rekap',ico:'⏱️',lbl:'Rekap Overtime',sec:''},
     {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:''},
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
@@ -1009,7 +1022,7 @@ async function renderDashboard(c){
   if(canTab('inbound')) bits.push({ico:'📥',lbl:'Inbound',val:(Number(sd.inboundToday||0))+' catatan',ok:Number(sd.inboundToday||0)>0,go:'inbound'});
   if(canTab('produksi')) bits.push({ico:'🏭',lbl:'Hasil Produksi',val:(Number(sd.produksiToday||0))+' item',ok:Number(sd.produksiToday||0)>0,go:'produksi'});
   if(canTab('cek-absensi')) bits.push({ico:'👥',lbl:'Hadir hari ini',val:(Number(sd.absensiCount||0))+' orang',ok:Number(sd.absensiCount||0)>0,go:'cek-absensi'});
-  if(canTab('izin-approval')&&NOTIF.kind==='approvals') bits.push({ico:'📝',lbl:'Menunggu persetujuan',val:NOTIF.count+' pengajuan',ok:NOTIF.count===0,go:'izin-approval'});
+  if(canTab('izin-approval')&&isApprover()) bits.push({ico:'📝',lbl:(S.user.role==='PIC'?'Perlu kamu cek':'Menunggu keputusan'),val:NOTIF.nAppr+' pengajuan',ok:NOTIF.nAppr===0,go:'izin-approval'});
 
   if(!bits.length){ box.innerHTML=''; return; }
   box.innerHTML='<div class="sec">📋 Hari Ini</div><div class="mission-grid">'+
@@ -1853,11 +1866,12 @@ async function renderAbsensi(c){
 
 // Staff lihat detail keputusan izin (dari notif) → setelah dibuka, notif dianggap terbaca.
 function showMyDecisions(){
-  var iz=(NOTIF.izin||[]).map(function(z){return{t:'Izin',label:z.jenis,z:z};});
-  var ot=(NOTIF.overtime||[]).map(function(z){return{t:'Overtime',label:z.hours+' jam',z:z};});
-  var cf=(NOTIF.clockfix||[]).map(function(z){return{t:'Koreksi',label:(z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time,z:z};});
+  var D=NOTIF.dec||{};
+  var iz=(D.izin||[]).map(function(z){return{t:'Izin',label:z.jenis,z:z};});
+  var ot=(D.overtime||[]).map(function(z){return{t:'Overtime',label:z.hours+' jam',z:z};});
+  var cf=(D.clockfix||[]).map(function(z){return{t:'Koreksi',label:(z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time,z:z};});
   var list=iz.concat(ot,cf);
-  if(!list.length){ navigateTo('absensi'); return; }
+  if(!list.length){ if(canTab('absensi')) navigateTo('absensi'); return; }
   var body=list.map(function(x){
     var z=x.z, ok=z.status==='Approved';
     return '<div style="border:1.5px solid '+(ok?'var(--green)':'var(--red)')+';border-radius:12px;padding:12px 14px;margin-bottom:10px">'+
@@ -1884,7 +1898,7 @@ function showMyDecisions(){
 window.showMyDecisions=showMyDecisions;
 window.showIzinDecisions=showMyDecisions;
 
-// ── PERSETUJUAN IZIN (AM/Owner) ──
+// ── PERSETUJUAN (2 tingkat: PIC → Kepala) ──
 var IZP_LIST=[];
 var APPR={izin:[],overtime:[],clockfix:[]};
 var APPR_TAB='izin';
@@ -1900,7 +1914,10 @@ async function renderIzinApproval(c){
     if(!APPR[APPR_TAB]||!APPR[APPR_TAB].length){
       APPR_TAB=APPR.izin.length?'izin':APPR.overtime.length?'overtime':'clockfix';
     }
-    c.innerHTML='<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.5">Pengajuan dari staff. Klik <b>Cek</b> untuk lihat detail, lalu putuskan. Penolakan wajib disertai alasan — alasan ini dibaca staff.</div>'+
+    var info = S.user.role==='PIC'
+      ? '<b>Tahap 1 — kamu yang cek duluan.</b> Kalau kamu setujui, pengajuan diteruskan ke <b>Kepala CK</b> untuk keputusan akhir. Kalau kamu tolak, langsung final ditolak.'
+      : '<b>Tahap 2 — keputusan akhir.</b> Yang tampil di sini hanya pengajuan yang sudah disetujui PIC (atau diajukan PIC sendiri).';
+    c.innerHTML='<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.55">'+info+' Penolakan wajib disertai alasan — alasan ini dibaca staff.</div>'+
       '<div id="appr-pills"></div><div id="appr-body"></div>';
     renderApprPills(); renderApprSection();
   }catch(e){c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+e.message+'</div></div>';}
@@ -1928,31 +1945,31 @@ function renderApprSection(){
   if(!list.length){ body.innerHTML='<div class="empty" style="padding:22px"><div class="ei">✅</div><div>Tidak ada pengajuan di kategori ini</div></div>'; return; }
   var head,rows;
   if(APPR_TAB==='izin'){
-    head='<th>Tanggal</th><th>Toko</th><th>Nama</th><th>Jenis</th><th>Keterangan</th><th></th>';
+    head='<th>Tanggal</th><th>'+apprStageHead()+'</th><th>Nama</th><th>Jenis</th><th>Keterangan</th><th></th>';
     rows=list.map(function(z,i){
       var cls=z.jenis==='Izin Sakit'?'sakit':'unpaid';
       return '<tr><td style="white-space:nowrap;font-weight:600">'+fmtDateShort(z.date)+'</td>'+
-        '<td>'+'CK'+'</td>'+
+        '<td>'+apprStageCell(z)+'</td>'+
         '<td style="font-weight:600">'+z.display_name+'</td>'+
         '<td><span class="izin-badge '+cls+'">'+z.jenis+'</span></td>'+
         '<td style="font-size:12px;color:var(--brown-soft);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(z.keterangan||'—')+'</td>'+
         '<td><button class="ftab" style="padding:5px 14px" onclick="openIzinCheck('+i+')">👁 Cek</button></td></tr>';
     }).join('');
   } else if(APPR_TAB==='overtime'){
-    head='<th>Tanggal</th><th>Toko</th><th>Nama</th><th style="text-align:center">Jam</th><th>Alasan</th><th></th>';
+    head='<th>Tanggal</th><th>'+apprStageHead()+'</th><th>Nama</th><th style="text-align:center">Jam</th><th>Alasan</th><th></th>';
     rows=list.map(function(z,i){
       return '<tr><td style="white-space:nowrap;font-weight:600">'+fmtDateShort(z.date)+'</td>'+
-        '<td>'+'CK'+'</td>'+
+        '<td>'+apprStageCell(z)+'</td>'+
         '<td style="font-weight:600">'+z.display_name+'</td>'+
         '<td style="text-align:center;font-weight:700">'+z.hours+' jam</td>'+
         '<td style="font-size:12px;color:var(--brown-soft);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(z.reason||'—')+'</td>'+
         '<td><button class="ftab" style="padding:5px 14px" onclick="openOvertimeCheck('+i+')">👁 Cek</button></td></tr>';
     }).join('');
   } else {
-    head='<th>Tanggal</th><th>Toko</th><th>Nama</th><th>Koreksi</th><th style="text-align:center">Jam</th><th></th>';
+    head='<th>Tanggal</th><th>'+apprStageHead()+'</th><th>Nama</th><th>Koreksi</th><th style="text-align:center">Jam</th><th></th>';
     rows=list.map(function(z,i){
       return '<tr><td style="white-space:nowrap;font-weight:600">'+fmtDateShort(z.date)+'</td>'+
-        '<td>'+'CK'+'</td>'+
+        '<td>'+apprStageCell(z)+'</td>'+
         '<td style="font-weight:600">'+z.display_name+'</td>'+
         '<td><span class="izin-badge" style="background:#EAF1F8;color:var(--blue)">'+(z.clock_type==='in'?'Clock In':'Clock Out')+'</span></td>'+
         '<td style="text-align:center;font-weight:700">'+z.time+'</td>'+
@@ -1962,23 +1979,35 @@ function renderApprSection(){
   body.innerHTML='<div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="tbl" style="min-width:640px"><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
+// Kolom tahap di tabel Persetujuan
+function apprOkLabel(){ return S.user.role==='PIC'?'✓ Setujui & Teruskan':'✓ Approve'; }
+// Pesan sukses sesuai tahap (r.stage dari backend)
+function apprOkMsg(r,finalText){ return (r&&r.stage==='kepala')?'✅ Diteruskan ke Kepala CK':finalText; }
+function apprStageLine(z){
+  if(S.user.role==='PIC') return '<b>Tahap:</b> 1 dari 2 — kalau disetujui, diteruskan ke Kepala CK<br>';
+  return '<b>Dicek PIC:</b> '+(z.pic_by?('✓ disetujui '+mEsc(z.pic_by)):'— (diajukan PIC sendiri)')+'<br>';
+}
+function apprStageHead(){ return S.user.role==='PIC'?'Status':'Dicek PIC'; }
+function apprStageCell(z){
+  if(S.user.role==='PIC') return '<span class="izin-badge" style="background:#FEF6E8;color:var(--gold)">Tahap 1</span>';
+  return z.pic_by
+    ? '<span style="font-size:12px;color:var(--green);font-weight:700">✓ '+mEsc(z.pic_by)+'</span>'
+    : '<span style="font-size:12px;color:var(--brown-soft)">diajukan PIC</span>';
+}
+
 function apprShowReject(prefix){ var d=document.getElementById(prefix+'-reject'); if(d){ d.style.display='block'; var inp=document.getElementById(prefix+'-reason'); if(inp)inp.focus(); } }
 window.apprShowReject=apprShowReject;
 
-// Update badge lonceng dari NOTIF.count (tanpa request server).
-function renderNotifBadge(){
-  var b=document.getElementById('bell-badge'); if(!b) return;
-  if(NOTIF.count>0){ b.textContent=NOTIF.count>99?'99+':NOTIF.count; b.style.display='flex'; }
-  else b.style.display='none';
-}
-window.renderNotifBadge=renderNotifBadge;
 
 // Setelah acc/tolak: buang item dari memori & re-render — TANPA fetch ulang lintas toko (biar cepat).
 function apprRemove(kind,i){
   if(APPR[kind]&&i>=0&&i<APPR[kind].length) APPR[kind].splice(i,1);
   var total=(APPR.izin||[]).length+(APPR.overtime||[]).length+(APPR.clockfix||[]).length;
   // sinkronkan lonceng AM secara lokal (AM = notif pending approval)
-  if(S.user.role==='Kepala'){ NOTIF.izin=APPR.izin; NOTIF.overtime=APPR.overtime; NOTIF.clockfix=APPR.clockfix; NOTIF.count=total; renderNotifBadge(); }
+  if(isApprover()){
+    NOTIF.appr={izin:APPR.izin,overtime:APPR.overtime,clockfix:APPR.clockfix};
+    NOTIF.nAppr=total; NOTIF.count=NOTIF.nAppr+(NOTIF.nDec||0); renderNotifBadge();
+  }
   var c=document.getElementById('content');
   if(!total){ if(c) c.innerHTML='<div class="empty"><div class="ei">✅</div><div>Tidak ada pengajuan yang menunggu persetujuan</div></div>'; return; }
   if(!APPR[APPR_TAB]||!APPR[APPR_TAB].length){ APPR_TAB=APPR.izin.length?'izin':APPR.overtime.length?'overtime':'clockfix'; }
@@ -1991,7 +2020,7 @@ function openIzinCheck(i){
   showPopup('📝 Izin — '+z.display_name,
     '<div style="font-size:13.5px;line-height:1.8;margin-bottom:12px">'+
       '<b>Tanggal:</b> '+fmtDateShort(z.date)+'<br>'+
-      '<b>Toko:</b> '+'CK'+'<br>'+
+      apprStageLine(z)+
       '<b>Jenis:</b> '+z.jenis+'<br>'+
       '<b>Keterangan:</b> '+(z.keterangan||'<span style="color:var(--brown-soft)">—</span>')+'<br>'+
       '<b>Diajukan:</b> '+(z.created_at?String(z.created_at).slice(0,10):'-')+
@@ -1999,7 +2028,7 @@ function openIzinCheck(i){
     (z.photo_url?'<img src="'+driveImg(z.photo_url)+'" style="max-width:100%;border-radius:10px;margin-bottom:12px">'
                 :'<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px">Tidak ada lampiran.</div>')+
     '<div style="display:flex;gap:8px">'+
-      '<button class="save-btn" style="flex:1;background:var(--green)" onclick="decideIzin('+i+',\'Approved\')">✓ Approve</button>'+
+      '<button class="save-btn" style="flex:1;background:var(--green)" onclick="decideIzin('+i+',\'Approved\')">'+apprOkLabel()+'</button>'+
       '<button class="save-btn" style="flex:1;background:var(--red)" onclick="showRejectReason('+i+')">✕ Reject</button>'+
     '</div>'+
     '<div id="izp-reject" style="display:none;margin-top:12px">'+
@@ -2028,7 +2057,7 @@ async function decideIzin(i,decision){
   try{
     var r=await api({action:'decideIzin',token:S.token,store:z.store,date:z.date,username:z.username,decision:decision,reason:reason});
     if(r&&r.ok){
-      if(msg){msg.textContent=decision==='Approved'?'✅ Disetujui':'✅ Ditolak — staff akan diberi tahu';msg.className='save-msg ok';}
+      if(msg){msg.textContent=decision==='Approved'?apprOkMsg(r,'✅ Disetujui'):'✅ Ditolak — staff akan diberi tahu';msg.className='save-msg ok';}
       setTimeout(function(){ closePopup(); apprRemove('izin', i); },600);
     } else if(msg){msg.textContent='❌ '+((r&&r.error)||'Gagal');msg.className='save-msg err';}
   }catch(e){ if(msg){msg.textContent='❌ '+e.message;msg.className='save-msg err';} }
@@ -2040,14 +2069,14 @@ function openOvertimeCheck(i){
   showPopup('⏱️ Overtime — '+z.display_name,
     '<div style="font-size:13.5px;line-height:1.8;margin-bottom:12px">'+
       '<b>Tanggal:</b> '+fmtDateShort(z.date)+'<br>'+
-      '<b>Toko:</b> '+'CK'+'<br>'+
+      apprStageLine(z)+
       '<b>Jumlah Jam:</b> '+z.hours+' jam<br>'+
       '<b>Alasan:</b> '+(z.reason||'<span style="color:var(--brown-soft)">—</span>')+'<br>'+
       '<b>Diajukan:</b> '+(z.created_at?String(z.created_at).slice(0,10):'-')+
     '</div>'+
-    '<div style="font-size:12px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px">Kalau disetujui, <b>'+z.hours+' jam</b> masuk sheet OVERTIME (rekap) di kolom tanggal '+fmtDateShort(z.date)+'.</div>'+
+    (S.user.role==='PIC'?'':'<div style="font-size:12px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px">Kalau disetujui, <b>'+z.hours+' jam</b> masuk sheet OVERTIME (rekap) di kolom tanggal '+fmtDateShort(z.date)+'.</div>')+
     '<div style="display:flex;gap:8px">'+
-      '<button class="save-btn" style="flex:1;background:var(--green)" onclick="decideOvertime('+i+',\'Approved\')">✓ Approve</button>'+
+      '<button class="save-btn" style="flex:1;background:var(--green)" onclick="decideOvertime('+i+',\'Approved\')">'+apprOkLabel()+'</button>'+
       '<button class="save-btn" style="flex:1;background:var(--red)" onclick="apprShowReject(\'otp\')">✕ Reject</button>'+
     '</div>'+
     '<div id="otp-reject" style="display:none;margin-top:12px">'+
@@ -2069,7 +2098,7 @@ async function decideOvertime(i,decision){
   try{
     var r=await api({action:'decideOvertime',token:S.token,store:z.store,date:z.date,username:z.username,decision:decision,reason:reason});
     if(r&&r.ok){
-      if(msg){msg.textContent=decision==='Approved'?'✅ Disetujui — jam masuk rekap':'✅ Ditolak — staff diberi tahu';msg.className='save-msg ok';}
+      if(msg){msg.textContent=decision==='Approved'?apprOkMsg(r,'✅ Disetujui — jam masuk rekap'):'✅ Ditolak — staff diberi tahu';msg.className='save-msg ok';}
       setTimeout(function(){ closePopup(); apprRemove('overtime', i); },600);
     } else if(msg){msg.textContent='❌ '+((r&&r.error)||'Gagal');msg.className='save-msg err';}
   }catch(e){ if(msg){msg.textContent='❌ '+e.message;msg.className='save-msg err';} }
@@ -2082,14 +2111,14 @@ function openClockfixCheck(i){
   showPopup('🔧 Koreksi Absen — '+z.display_name,
     '<div style="font-size:13.5px;line-height:1.8;margin-bottom:12px">'+
       '<b>Tanggal:</b> '+fmtDateShort(z.date)+'<br>'+
-      '<b>Toko:</b> '+'CK'+'<br>'+
+      apprStageLine(z)+
       '<b>Yang dikoreksi:</b> '+lbl+'<br>'+
       '<b>Jam diminta:</b> '+z.time+'<br>'+
       '<b>Diajukan:</b> '+(z.created_at?String(z.created_at).slice(0,10):'-')+
     '</div>'+
-    '<div style="font-size:12px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px">Kalau disetujui, <b>'+lbl+'</b> di ABSENSI tanggal '+fmtDateShort(z.date)+' akan diisi/ditimpa jadi <b>'+z.time+'</b>.</div>'+
+    (S.user.role==='PIC'?'':'<div style="font-size:12px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px">Kalau disetujui, <b>'+lbl+'</b> di ABSENSI tanggal '+fmtDateShort(z.date)+' akan diisi/ditimpa jadi <b>'+z.time+'</b>.</div>')+
     '<div style="display:flex;gap:8px">'+
-      '<button class="save-btn" style="flex:1;background:var(--green)" onclick="decideClockfix('+i+',\'Approved\')">✓ Approve</button>'+
+      '<button class="save-btn" style="flex:1;background:var(--green)" onclick="decideClockfix('+i+',\'Approved\')">'+apprOkLabel()+'</button>'+
       '<button class="save-btn" style="flex:1;background:var(--red)" onclick="apprShowReject(\'cfp\')">✕ Reject</button>'+
     '</div>'+
     '<div id="cfp-reject" style="display:none;margin-top:12px">'+
@@ -2111,7 +2140,7 @@ async function decideClockfix(i,decision){
   try{
     var r=await api({action:'decideClockfix',token:S.token,store:z.store,date:z.date,username:z.username,clock_type:z.clock_type,decision:decision,reason:reason});
     if(r&&r.ok){
-      if(msg){msg.textContent=decision==='Approved'?'✅ Disetujui — absen diperbarui':'✅ Ditolak — staff diberi tahu';msg.className='save-msg ok';}
+      if(msg){msg.textContent=decision==='Approved'?apprOkMsg(r,'✅ Disetujui — absen diperbarui'):'✅ Ditolak — staff diberi tahu';msg.className='save-msg ok';}
       setTimeout(function(){ closePopup(); apprRemove('clockfix', i); },600);
     } else if(msg){msg.textContent='❌ '+((r&&r.error)||'Gagal');msg.className='save-msg err';}
   }catch(e){ if(msg){msg.textContent='❌ '+e.message;msg.className='save-msg err';} }
@@ -2193,9 +2222,7 @@ async function loadMyIzin(){
       rows.map(function(z){
         var cls=z.jenis==='Izin Sakit'?'sakit':'unpaid';
         var st=z.status||'Approved';
-        var stBadge=st==='Pending'?'<span class="izin-badge" style="background:#FEF6E8;color:var(--gold)">⏳ Menunggu</span>'
-                  :st==='Rejected'?'<span class="izin-badge" style="background:#FFF0EE;color:var(--red)" title="'+String(z.reject_reason||'').replace(/"/g,'')+'">✕ Ditolak</span>'
-                  :'<span class="izin-badge" style="background:#EEF7EE;color:var(--green)">✓ Disetujui</span>';
+        var stBadge=decisionBadge(st,z.reject_reason);
         return '<div class="izin-row">'+
           '<span style="font-size:12px;font-weight:700;white-space:nowrap">'+fmtDateShort(z.date)+'</span>'+
           '<span class="izin-badge '+cls+'">'+z.jenis+'</span>'+
@@ -2210,8 +2237,9 @@ window.loadMyIzin=loadMyIzin;
 
 // Badge status keputusan (dipakai overtime & koreksi clock)
 function decisionBadge(st,reason){
-  return st==='Pending'?'<span class="izin-badge" style="background:#FEF6E8;color:var(--gold)">⏳ Menunggu</span>'
-    :st==='Rejected'?'<span class="izin-badge" style="background:#FFF0EE;color:var(--red)" title="'+String(reason||'').replace(/"/g,'')+'">✕ Ditolak</span>'
+  if(st==='Pending PIC') return '<span class="izin-badge" style="background:#FEF6E8;color:var(--gold)">⏳ Menunggu PIC</span>';
+  if(st==='Pending Kepala'||st==='Pending') return '<span class="izin-badge" style="background:#FEF6E8;color:var(--gold)">⏳ Menunggu Kepala</span>';
+  return st==='Rejected'?'<span class="izin-badge" style="background:#FFF0EE;color:var(--red)" title="'+String(reason||'').replace(/"/g,'')+'">✕ Ditolak</span>'
     :'<span class="izin-badge" style="background:#EEF7EE;color:var(--green)">✓ Disetujui</span>';
 }
 
