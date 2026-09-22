@@ -3193,11 +3193,13 @@ function getLogoDataUrl(){
 }
 
 // =========================================================
-// CREATE INVOICE (Admin / Owner)
-//   Cabang  ← sheet TARGET  ·  Barang ← sheet RECAP (dikelompokkan per CTG)
-//   Nominal = qty / usage × harga jual. Server menghitung ulang saat simpan.
+// CREATE INVOICE (Admin / Owner) — multi-order per tanggal + diskon
+//   Cabang ← TARGET · Barang ← RECAP (per CTG)
+//   1 order = 1 tanggal kirim = barang + 1 delivery fee
+//   Diskon memotong subtotal barang (bukan delivery fee)
+//   PDF: hal.1 summary gabungan · hal.2 lampiran detail per tanggal
 // =========================================================
-var INV={stores:[],items:[],qty:{},fees:[''],editNo:null,saved:null,tab:'form',due:30};
+var INV={stores:[],items:[],orders:[],disc:{type:'pct',value:''},editNo:null,saved:null,tab:'form',due:30,_store:null};
 var INV_CO={
   name:'PT SUKA SEGAR INDONESIA',
   addr:['Jl. Tanah Abang 1 No. 11F.','RT.008/RW.008, Kel. Petojo Selatan Kec. Gambir','Jakarta Pusat 10160, Indonesia'],
@@ -3205,6 +3207,7 @@ var INV_CO={
 };
 function invRp(n){ return 'Rp '+Math.round(Number(n)||0).toLocaleString('id-ID'); }
 function invAmt(it,q){ q=Number(q)||0; return q>0?Math.round(q/it.usage*it.price):0; }
+function invNewOrder(date){ return {date:date||S.today,qty:{},fee:'',open:true}; }
 
 async function renderInvoice(c){
   c.innerHTML=LOADING;
@@ -3213,6 +3216,7 @@ async function renderInvoice(c){
     if(!r.ok){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
     INV.stores=r.stores||[]; INV.items=r.items||[]; INV.due=r.due_days||30;
   }catch(e){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; return; }
+  if(!INV.orders.length) INV.orders=[invNewOrder()];
   c.innerHTML='<div id="inv-pills"></div><div id="inv-body"></div>';
   invSwitch(INV.tab||'form');
 }
@@ -3232,12 +3236,29 @@ function invSwitch(t){
 window.invSwitch=invSwitch;
 
 function invNew(){
-  INV.qty={}; INV.fees=['']; INV.editNo=null; INV.saved=null;
-  INV._from=null; INV._to=null; INV._store=null;
+  INV.orders=[invNewOrder()]; INV.disc={type:'pct',value:''};
+  INV.editNo=null; INV.saved=null; INV._store=null;
   invSwitch('form');
 }
 window.invNew=invNew;
 
+// ---------- hitungan (sama persis dgn server) ----------
+function invOrderCalc(o){
+  var sub=0, n=0;
+  INV.items.forEach(function(it){ var a=invAmt(it,o.qty[it.key]); if(a){ sub+=a; n++; } });
+  var fee=Math.max(0,Math.round(Number(o.fee)||0));
+  return {sub:sub,fee:fee,n:n,total:sub+fee};
+}
+function invTotals(){
+  var sub=0, del=0, kirim=0;
+  INV.orders.forEach(function(o){ var x=invOrderCalc(o); sub+=x.sub; del+=x.fee; if(x.fee) kirim++; });
+  var v=Math.max(0,Number(INV.disc.value)||0), disc=0;
+  if(INV.disc.type==='pct') disc=Math.round(sub*Math.min(v,100)/100);
+  else disc=Math.min(Math.round(v),sub);
+  return {sub:sub,disc:disc,del:del,kirim:kirim,grand:sub-disc+del};
+}
+
+// ---------- form ----------
 function invRenderForm(){
   var box=document.getElementById('inv-body'); if(!box) return;
   if(INV.saved){ invRenderSaved(); return; }
@@ -3247,56 +3268,24 @@ function invRenderForm(){
   if(!INV.items.length){
     box.innerHTML='<div class="empty"><div class="ei">📋</div><div>Belum ada barang yang bisa ditagih di <b>RECAP</b>.<br><span style="font-size:12px">Barang tampil kalau kolom G (USAGE) dan I (Selling Price) terisi.</span></div></div>'; return;
   }
-  var d=new Date(S.today), first=new Date(d.getFullYear(),d.getMonth(),1);
-  var from=INV._from||first.toISOString().slice(0,10), to=INV._to||S.today;
-
-  // kelompokkan per CTG, urutan mengikuti RECAP
-  var groups=[], gi={};
-  INV.items.forEach(function(it,i){
-    if(gi[it.ctg]===undefined){ gi[it.ctg]=groups.length; groups.push({ctg:it.ctg,rows:[]}); }
-    groups[gi[it.ctg]].rows.push(i);
-  });
-
   box.innerHTML='<div class="card">'+
     (INV.editNo?'<div style="font-size:12.5px;background:#FEF6E8;border:1px solid #F1D9A8;border-radius:8px;padding:9px 12px;margin-bottom:12px">✏️ Mengedit <b>'+mEsc(INV.editNo)+'</b> — nomor dan tanggal invoice tetap. <span style="text-decoration:underline;cursor:pointer" onclick="invNew()">Batal edit</span></div>':'')+
-    '<div class="form-grid">'+
-      '<div class="fg"><label>Periode Dari</label><input class="fi2" type="date" id="inv-from" value="'+from+'"></div>'+
-      '<div class="fg"><label>Periode Sampai</label><input class="fi2" type="date" id="inv-to" value="'+to+'"></div>'+
-      '<div class="fg full"><label>Cabang</label><select class="fi2" id="inv-store" onchange="invStoreInfo()">'+
-        '<option value="">— Pilih cabang —</option>'+
-        INV.stores.map(function(st){return '<option value="'+mEsc(st.name)+'"'+(INV._store===st.name?' selected':'')+'>'+mEsc(st.name)+'</option>';}).join('')+
-      '</select></div>'+
-    '</div>'+
-    '<div id="inv-store-info"></div>'+
-  '</div>'+
-  '<div class="card"><div class="card-title">📦 Barang</div>'+
-    '<div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="tbl" style="min-width:560px">'+
-    '<thead><tr><th>Item</th><th style="text-align:right">Harga</th><th style="text-align:right">Jumlah</th><th style="text-align:right">Total</th></tr></thead><tbody>'+
-    groups.map(function(g){
-      return '<tr><td colspan="4" style="background:var(--surface2);font-size:11px;font-weight:800;letter-spacing:.6px;color:var(--brown-soft);padding:6px 10px">'+mEsc(g.ctg)+'</td></tr>'+
-        g.rows.map(function(i){
-          var it=INV.items[i], v=INV.qty[it.key];
-          return '<tr>'+
-            '<td style="font-weight:600">'+mEsc(it.name)+'</td>'+
-            '<td style="text-align:right;white-space:nowrap;font-size:11.5px;color:var(--brown-soft)">'+invRp(it.price)+'<br>/ '+Number(it.usage).toLocaleString('id-ID')+' '+mEsc(it.unit)+'</td>'+
-            '<td style="text-align:right;white-space:nowrap"><input type="number" min="0" step="any" placeholder="0" id="inv-q-'+i+'" value="'+(v!==undefined&&v!==''?v:'')+'" oninput="invCalc()" style="width:86px;text-align:right"> '+
-              '<span style="font-size:12px;color:var(--brown-soft)">'+mEsc(it.unit)+'</span></td>'+
-            '<td style="text-align:right;font-weight:700;white-space:nowrap" id="inv-a-'+i+'">—</td>'+
-          '</tr>';
-        }).join('');
-    }).join('')+
-    '</tbody></table></div></div>'+
-  '<div class="card"><div class="card-title">🚚 Delivery Fee</div><div id="inv-fees"></div>'+
-    '<button class="ftab" style="padding:8px 14px;margin-top:6px" onclick="invAddFee()">＋ Tambah Delivery Fee</button></div>'+
-  '<div class="card" style="background:var(--brown-deep);color:#fff">'+
-    '<div style="display:flex;justify-content:space-between;font-size:13px;opacity:.85;margin-bottom:4px"><span>Subtotal Barang</span><span id="inv-sub">Rp 0</span></div>'+
-    '<div style="display:flex;justify-content:space-between;font-size:13px;opacity:.85;margin-bottom:8px"><span>Delivery Fee</span><span id="inv-del">Rp 0</span></div>'+
-    '<div style="display:flex;justify-content:space-between;font-size:18px;font-weight:800;border-top:1px solid rgba(255,255,255,.25);padding-top:8px"><span>TOTAL</span><span id="inv-grand">Rp 0</span></div>'+
-  '</div>'+
+    '<div class="form-grid"><div class="fg full"><label>Cabang</label><select class="fi2" id="inv-store" onchange="invStoreInfo()">'+
+      '<option value="">— Pilih cabang —</option>'+
+      INV.stores.map(function(st){return '<option value="'+mEsc(st.name)+'"'+(INV._store===st.name?' selected':'')+'>'+mEsc(st.name)+'</option>';}).join('')+
+    '</select></div></div><div id="inv-store-info"></div></div>'+
+  '<div id="inv-orders"></div>'+
+  '<button class="ftab" style="width:100%;padding:11px;margin-bottom:14px;font-weight:700" onclick="invAddOrder()">＋ Tambah Order</button>'+
+  '<div class="card"><div class="card-title">🏷️ Diskon <span style="font-weight:400;font-size:12px;color:var(--brown-soft)">(opsional · dari subtotal barang)</span></div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+      '<div id="inv-disc-type" style="display:flex;gap:6px"></div>'+
+      '<input type="number" min="0" step="any" id="inv-disc-val" placeholder="0" value="'+(INV.disc.value===''?'':INV.disc.value)+'" oninput="INV.disc.value=this.value;invCalc()" style="width:130px;text-align:right">'+
+      '<span id="inv-disc-hint" style="font-size:12.5px;color:var(--brown-soft)"></span>'+
+    '</div></div>'+
+  '<div class="card" style="background:var(--brown-deep);color:#fff" id="inv-summary"></div>'+
   '<div class="row-actions"><button class="save-btn" id="inv-save" onclick="invSave()">'+(INV.editNo?'💾 Simpan Perubahan':'💾 Simpan Invoice')+'</button>'+
   '<div id="inv-msg" class="save-msg"></div></div>';
-
-  invStoreInfo(); invRenderFees(); invCalc();
+  invStoreInfo(); invRenderOrders(); invRenderDiscType(); invCalc();
 }
 
 function invStoreInfo(){
@@ -3311,61 +3300,131 @@ function invStoreInfo(){
 }
 window.invStoreInfo=invStoreInfo;
 
-function invRenderFees(){
-  var el=document.getElementById('inv-fees'); if(!el) return;
-  el.innerHTML=INV.fees.map(function(f,i){
-    return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'+
-      '<span style="font-weight:600;min-width:112px">Delivery Fee '+(i+1)+'</span>'+
-      '<span style="font-size:12.5px;color:var(--brown-soft)">Rp</span>'+
-      '<input type="number" min="0" step="1" placeholder="0" value="'+(f===''?'':f)+'" oninput="invFeeInput('+i+',this.value)" style="flex:1;max-width:180px;text-align:right">'+
-      (INV.fees.length>1?'<button class="ftab" style="padding:4px 10px;color:var(--red)" onclick="invDelFee('+i+')" title="Hapus">✕</button>':'')+
-    '</div>';
-  }).join('');
-}
-function invAddFee(){ invSyncQty(); INV.fees.push(''); invRenderFees(); invCalc(); }
-function invDelFee(i){ INV.fees.splice(i,1); if(!INV.fees.length) INV.fees=['']; invRenderFees(); invCalc(); }
-function invFeeInput(i,v){ INV.fees[i]=v; invCalc(); }
-window.invAddFee=invAddFee; window.invDelFee=invDelFee; window.invFeeInput=invFeeInput;
-
-function invSyncQty(){
+function invRenderOrders(){
+  var el=document.getElementById('inv-orders'); if(!el) return;
+  // kelompok CTG sekali saja
+  var groups=[], gi={};
   INV.items.forEach(function(it,i){
-    var el=document.getElementById('inv-q-'+i);
-    if(el) INV.qty[it.key]=el.value;
+    if(gi[it.ctg]===undefined){ gi[it.ctg]=groups.length; groups.push({ctg:it.ctg,rows:[]}); }
+    groups[gi[it.ctg]].rows.push(i);
   });
-  var f=document.getElementById('inv-from'), t=document.getElementById('inv-to');
-  if(f) INV._from=f.value; if(t) INV._to=t.value;
+  el.innerHTML=INV.orders.map(function(o,oi){
+    var x=invOrderCalc(o);
+    var head='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<span style="font-weight:800;color:var(--brown-deep);min-width:64px">Order '+(oi+1)+'</span>'+
+      '<input class="fi2" type="date" value="'+mEsc(o.date||'')+'" onchange="INV.orders['+oi+'].date=this.value;invRefreshHead('+oi+')" style="max-width:160px">'+
+      '<span id="inv-oh-'+oi+'" style="flex:1;font-size:12.5px;color:var(--brown-soft);text-align:right"></span>'+
+      '<button class="ftab" style="padding:5px 11px" onclick="invToggle('+oi+')">'+(o.open?'▲ Lipat':'▼ Buka')+'</button>'+
+      (INV.orders.length>1?'<button class="ftab" style="padding:5px 10px;color:var(--red)" onclick="invDelOrder('+oi+')" title="Hapus order">✕</button>':'')+
+    '</div>';
+    if(!o.open) return '<div class="card" style="padding:12px 14px">'+head+'</div>';
+    return '<div class="card">'+head+
+      '<div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px"><table class="tbl" style="min-width:540px">'+
+      '<thead><tr><th>Item</th><th style="text-align:right">Harga</th><th style="text-align:right">Jumlah</th><th style="text-align:right">Total</th></tr></thead><tbody>'+
+      groups.map(function(g){
+        return '<tr><td colspan="4" style="background:var(--surface2);font-size:11px;font-weight:800;letter-spacing:.6px;color:var(--brown-soft);padding:6px 10px">'+mEsc(g.ctg)+'</td></tr>'+
+          g.rows.map(function(i){
+            var it=INV.items[i], v=o.qty[it.key];
+            return '<tr><td style="font-weight:600">'+mEsc(it.name)+'</td>'+
+              '<td style="text-align:right;white-space:nowrap;font-size:11.5px;color:var(--brown-soft)">'+invRp(it.price)+'<br>/ '+Number(it.usage).toLocaleString('id-ID')+' '+mEsc(it.unit)+'</td>'+
+              '<td style="text-align:right;white-space:nowrap"><input type="number" min="0" step="any" placeholder="0" value="'+(v!==undefined&&v!==''?v:'')+'" oninput="invQ('+oi+','+i+',this.value)" style="width:86px;text-align:right"> '+
+                '<span style="font-size:12px;color:var(--brown-soft)">'+mEsc(it.unit)+'</span></td>'+
+              '<td style="text-align:right;font-weight:700;white-space:nowrap" id="inv-a-'+oi+'-'+i+'">—</td></tr>';
+          }).join('');
+      }).join('')+
+      '<tr><td style="font-weight:700">🚚 Delivery Fee</td><td></td>'+
+        '<td style="text-align:right;white-space:nowrap"><span style="font-size:12px;color:var(--brown-soft)">Rp</span> <input type="number" min="0" step="1" placeholder="0" value="'+(o.fee===''?'':o.fee)+'" oninput="INV.orders['+oi+'].fee=this.value;invCalc()" style="width:110px;text-align:right"></td>'+
+        '<td></td></tr>'+
+      '</tbody></table></div></div>';
+  }).join('');
+  INV.orders.forEach(function(o,oi){ invRefreshHead(oi); });
 }
+
+function invRefreshHead(oi){
+  var o=INV.orders[oi], el=document.getElementById('inv-oh-'+oi); if(!o||!el) return;
+  var x=invOrderCalc(o);
+  el.innerHTML=(x.n?x.n+' barang · ':'')+(x.fee?'ongkir '+invRp(x.fee)+' · ':'')+'<b style="color:var(--brown-deep)">'+invRp(x.total)+'</b>';
+  INV.items.forEach(function(it,i){
+    var a=invAmt(it,o.qty[it.key]), c=document.getElementById('inv-a-'+oi+'-'+i);
+    if(c){ c.textContent=a?invRp(a):'—'; c.style.color=a?'var(--green)':''; }
+  });
+}
+window.invRefreshHead=invRefreshHead;
+
+function invQ(oi,i,v){ INV.orders[oi].qty[INV.items[i].key]=v; invCalc(); }
+function invToggle(oi){ INV.orders[oi].open=!INV.orders[oi].open; invRenderOrders(); invCalc(); }
+function invAddOrder(){
+  INV.orders.forEach(function(o){ if(invOrderCalc(o).total) o.open=false; });   // lipat yang sudah terisi
+  var last=INV.orders[INV.orders.length-1];
+  INV.orders.push(invNewOrder(last&&last.date?last.date:S.today));
+  invRenderOrders(); invCalc();
+  var el=document.getElementById('inv-orders'); if(el&&el.lastElementChild) el.lastElementChild.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function invDelOrder(oi){
+  var o=INV.orders[oi];
+  if(invOrderCalc(o).total&&!confirm('Hapus Order '+(oi+1)+(o.date?' ('+fmtDateShort(o.date)+')':'')+'?')) return;
+  INV.orders.splice(oi,1); if(!INV.orders.length) INV.orders=[invNewOrder()];
+  invRenderOrders(); invCalc();
+}
+window.invQ=invQ; window.invToggle=invToggle; window.invAddOrder=invAddOrder; window.invDelOrder=invDelOrder;
+
+function invRenderDiscType(){
+  var el=document.getElementById('inv-disc-type'); if(!el) return;
+  function b(t,lbl){
+    var a=INV.disc.type===t;
+    return '<button onclick="INV.disc.type=\''+t+'\';invRenderDiscType();invCalc()" style="padding:7px 14px;border:1.5px solid '+(a?'var(--brown-deep)':'var(--line)')+';background:'+(a?'var(--brown-deep)':'var(--surface)')+';color:'+(a?'#fff':'var(--brown-deep)')+';border-radius:8px;font-family:inherit;font-weight:700;cursor:pointer">'+lbl+'</button>';
+  }
+  el.innerHTML=b('pct','%')+b('value','Rp');
+}
+window.invRenderDiscType=invRenderDiscType;
 
 function invCalc(){
-  invSyncQty();
-  var sub=0;
-  INV.items.forEach(function(it,i){
-    var a=invAmt(it,INV.qty[it.key]);
-    sub+=a;
-    var el=document.getElementById('inv-a-'+i);
-    if(el){ el.textContent=a?invRp(a):'—'; el.style.color=a?'var(--green)':''; }
-  });
-  var del=INV.fees.reduce(function(t,f){return t+Math.max(0,Math.round(Number(f)||0));},0);
-  var set=function(id,v){ var e=document.getElementById(id); if(e) e.textContent=invRp(v); };
-  set('inv-sub',sub); set('inv-del',del); set('inv-grand',sub+del);
+  INV.orders.forEach(function(o,oi){ invRefreshHead(oi); });
+  var t=invTotals();
+  var hint=document.getElementById('inv-disc-hint');
+  if(hint){
+    var v=Number(INV.disc.value)||0;
+    hint.innerHTML=t.disc?('= potongan <b>'+invRp(t.disc)+'</b>'):
+      (INV.disc.type==='pct'&&v>100?'<span style="color:var(--red)">maks 100%</span>':'');
+  }
+  var el=document.getElementById('inv-summary'); if(!el) return;
+  var dLbl=INV.disc.type==='pct'?('Diskon ('+(Number(INV.disc.value)||0)+'%)'):'Diskon';
+  function row(k,v,cls){ return '<div style="display:flex;justify-content:space-between;font-size:13px;opacity:.85;margin-bottom:4px"><span>'+k+'</span><span>'+v+'</span></div>'; }
+  el.innerHTML=
+    '<div style="font-size:11.5px;opacity:.7;margin-bottom:8px">'+INV.orders.length+' order · periode '+invPeriodLabel()+'</div>'+
+    row('Subtotal Barang',invRp(t.sub))+
+    (t.disc?row(dLbl,'−'+invRp(t.disc)):'')+
+    row('Delivery Fee'+(t.kirim>1?' ('+t.kirim+'x)':''),invRp(t.del))+
+    '<div style="display:flex;justify-content:space-between;font-size:18px;font-weight:800;border-top:1px solid rgba(255,255,255,.25);padding-top:8px;margin-top:6px"><span>TOTAL</span><span>'+invRp(t.grand)+'</span></div>';
 }
 window.invCalc=invCalc;
 
+function invPeriodLabel(){
+  var d=INV.orders.filter(function(o){return o.date&&invOrderCalc(o).total;}).map(function(o){return o.date;}).sort();
+  if(!d.length) return '—';
+  return fmtDateShort(d[0])+(d[0]!==d[d.length-1]?' – '+fmtDateShort(d[d.length-1]):'');
+}
+
 async function invSave(){
-  invSyncQty();
   var msg=document.getElementById('inv-msg'), btn=document.getElementById('inv-save');
   function err(t){ if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
   var store=(document.getElementById('inv-store')||{}).value;
-  var from=INV._from, to=INV._to;
-  if(!from||!to) return err('Isi periode dulu');
   if(!store) return err('Pilih cabang dulu');
-  var lines=INV.items.map(function(it){return{key:it.key,qty:Number(INV.qty[it.key])||0};}).filter(function(x){return x.qty>0;});
-  var fees=INV.fees.map(function(f){return Math.round(Number(f)||0);}).filter(function(x){return x>0;});
-  if(!lines.length&&!fees.length) return err('Belum ada barang atau delivery fee yang diisi');
+  var payload=[];
+  for(var oi=0;oi<INV.orders.length;oi++){
+    var o=INV.orders[oi], x=invOrderCalc(o);
+    if(!x.total) continue;
+    if(!o.date) return err('Order '+(oi+1)+': tanggal belum diisi');
+    payload.push({date:o.date,fee:x.fee,
+      lines:INV.items.map(function(it){return{key:it.key,qty:Number(o.qty[it.key])||0};}).filter(function(l){return l.qty>0;})});
+  }
+  if(!payload.length) return err('Belum ada barang atau delivery fee yang diisi');
+  if(INV.disc.type==='pct'&&Number(INV.disc.value)>100) return err('Diskon persen maksimal 100%');
   if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
   try{
     var r=await api({action:'saveInvoice',token:S.token,store:S.store,invoice_no:INV.editNo||'',
-      store_name:store,from:from,to:to,lines:JSON.stringify(lines),fees:JSON.stringify(fees)});
+      store_name:store,orders:JSON.stringify(payload),
+      discount_type:(Number(INV.disc.value)>0?INV.disc.type:''),discount_value:INV.disc.value||0});
     if(r.ok){ INV.saved={invoice:r.invoice,items:r.items,edited:r.edited}; invRenderSaved(); return; }
     err(r.error||'Gagal menyimpan');
   }catch(e){ err(e.message); }
@@ -3379,7 +3438,7 @@ function invRenderSaved(){
   box.innerHTML='<div class="card" style="text-align:center;padding:26px 18px">'+
     '<div style="font-size:34px">✅</div>'+
     '<div style="font-size:16px;font-weight:800;color:var(--brown-deep);margin-top:6px">'+(INV.saved.edited?'Perubahan tersimpan':'Invoice tersimpan')+'</div>'+
-    '<div style="font-size:13px;color:var(--brown-soft);margin-top:4px">'+mEsc(h.invoice_no)+' · '+mEsc(h.store_name)+'</div>'+
+    '<div style="font-size:13px;color:var(--brown-soft);margin-top:4px">'+mEsc(h.invoice_no)+' · '+mEsc(h.store_name)+' · '+(h.order_count||1)+' order</div>'+
     '<div style="font-size:22px;font-weight:800;color:var(--brown-deep);margin:12px 0 16px">'+invRp(h.grand_total)+'</div>'+
     '<button class="save-btn" style="width:100%;max-width:320px" onclick="invPdf(INV.saved.invoice,INV.saved.items)">⬇️ Download PDF</button><br>'+
     '<button class="ftab" style="width:100%;max-width:320px;margin-top:8px;padding:9px" onclick="invNew()">🧾 Buat Invoice Baru</button>'+
@@ -3409,7 +3468,7 @@ async function invRenderList(){
         return '<tr style="'+(batal?'opacity:.5':'')+'">'+
           '<td style="font-weight:700;white-space:nowrap">'+mEsc(x.invoice_no)+(batal?'<div style="font-size:11px;color:var(--red);font-weight:700">DIBATALKAN</div>':'')+'</td>'+
           '<td style="white-space:nowrap">'+fmtDateShort(x.invoice_date)+'</td>'+
-          '<td>'+mEsc(x.store_name)+'</td>'+
+          '<td>'+mEsc(x.store_name)+(x.order_count>1?'<div style="font-size:11px;color:var(--brown-soft)">'+x.order_count+' order</div>':'')+'</td>'+
           '<td style="white-space:nowrap;font-size:12px">'+fmtDateShort(x.period_from)+' – '+fmtDateShort(x.period_to)+'</td>'+
           '<td style="text-align:right;font-weight:700;white-space:nowrap">'+invRp(x.grand_total)+'</td>'+
           '<td style="white-space:nowrap">'+
@@ -3427,19 +3486,28 @@ async function invOpen(i,mode){
     var r=await api({action:'getInvoice',token:S.token,store:S.store,invoice_no:x.invoice_no});
     if(!r.ok){ alert('❌ '+(r.error||'Gagal')); return; }
     if(mode==='pdf'){ invPdf(r.invoice,r.items); return; }
-    // muat ke form edit
-    INV.editNo=r.invoice.invoice_no; INV.saved=null; INV.qty={}; INV.fees=[];
-    INV._from=r.invoice.period_from; INV._to=r.invoice.period_to; INV._store=r.invoice.store_name;
-    var missing=[];
+    // muat ke form edit — kelompokkan per order_no
+    var h=r.invoice, byNo={}, order=[], missing=[], legacy=false;
     r.items.forEach(function(it){
-      if(it.type==='DELIVERY'){ INV.fees.push(String(it.amount)); return; }
+      var no=it.order_no;
+      if(no===''||no===undefined){ legacy=true; no=1; }
+      if(!byNo[no]){ byNo[no]={date:it.order_date||h.period_from||S.today,qty:{},fee:0,open:false}; order.push(no); }
+      var o=byNo[no];
+      if(it.type==='DELIVERY'){ o.fee=(Number(o.fee)||0)+Number(it.amount||0); return; }   // invoice lama bisa punya >1 fee
       var key=String(it.ctg||'').toUpperCase()+'|'+it.description;
-      if(INV.items.some(function(m){return m.key===key;})) INV.qty[key]=String(it.qty);
+      if(INV.items.some(function(m){return m.key===key;})) o.qty[key]=String((Number(o.qty[key])||0)+Number(it.qty||0));
       else missing.push(it.description);
     });
-    if(!INV.fees.length) INV.fees=[''];
+    INV.orders=order.sort(function(a,b){return a-b;}).map(function(n){ var o=byNo[n]; o.fee=o.fee?String(o.fee):''; return o; });
+    if(!INV.orders.length) INV.orders=[invNewOrder()];
+    INV.orders[0].open=true;
+    INV.disc={type:h.discount_type||'pct',value:h.discount_value?String(h.discount_value):''};
+    INV.editNo=h.invoice_no; INV.saved=null; INV._store=h.store_name;
     invSwitch('form');
-    if(missing.length) alert('Catatan: barang ini sudah tidak ada di RECAP (atau harganya kosong), jadi tidak ikut di form edit:\n• '+missing.join('\n• '));
+    var notes=[];
+    if(legacy) notes.push('Invoice ini dibuat sebelum fitur multi-order, jadi semua barang masuk sebagai Order 1. Cek & sesuaikan tanggalnya.');
+    if(missing.length) notes.push('Barang ini sudah tidak ada di RECAP (atau harganya kosong), jadi tidak ikut:\n• '+missing.join('\n• '));
+    if(notes.length) alert(notes.join('\n\n'));
   }catch(e){ alert('❌ '+e.message); }
 }
 window.invOpen=invOpen;
@@ -3476,10 +3544,32 @@ function buildInvoicePdf(h,items){
   function rp(n){ return 'Rp '+Math.round(Number(n)||0).toLocaleString('id-ID'); }
   function num(n){ return (Number(n)||0).toLocaleString('id-ID'); }
   function tgl(d){ return d?fmtDateShort(d):'-'; }
+  var TBL={theme:'grid',margin:{left:M,right:M},
+    headStyles:{fillColor:ESP,textColor:[255,255,255],fontStyle:'bold',fontSize:8.8},
+    bodyStyles:{textColor:ESP,fontSize:8.8,lineColor:LINE},
+    columnStyles:{0:{halign:'center',cellWidth:10},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:42},4:{halign:'right',cellWidth:32}}};
+  function head5(){ return [[{content:'No',styles:{halign:'center'}},'Deskripsi',
+    {content:'Jumlah',styles:{halign:'right'}},{content:'Harga',styles:{halign:'right'}},{content:'Total',styles:{halign:'right'}}]]; }
+  function band(){
+    doc.setFillColor(ESP[0],ESP[1],ESP[2]); doc.rect(0,0,W,6,'F');
+    doc.setFillColor(GOLD[0],GOLD[1],GOLD[2]); doc.rect(0,6,W,1.2,'F');
+  }
+  function footer(){
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
+    doc.text('Dokumen ini dibuat otomatis oleh sistem SoyaSuka Central Kitchen.',W/2,288,{align:'center'});
+  }
 
-  // Kop
-  doc.setFillColor(ESP[0],ESP[1],ESP[2]); doc.rect(0,0,W,6,'F');
-  doc.setFillColor(GOLD[0],GOLD[1],GOLD[2]); doc.rect(0,6,W,1.2,'F');
+  var itemRows=items.filter(function(x){return x.type==='ITEM';});
+  var feeRows=items.filter(function(x){return x.type==='DELIVERY';});
+  var hasOrders=items.some(function(x){return x.order_no!==''&&x.order_no!==undefined&&x.order_date;});
+
+  // nama kembar lintas CTG (mis. SOYA SUKA TRIO) → tampilkan CTG
+  var ctgOf={};
+  itemRows.forEach(function(x){ (ctgOf[x.description]=ctgOf[x.description]||{})[x.ctg]=1; });
+  function desc(x){ return x.description+((ctgOf[x.description]&&Object.keys(ctgOf[x.description]).length>1&&x.ctg)?' ('+x.ctg+')':''); }
+
+  // ===== HALAMAN 1 — SUMMARY =====
+  band();
   try{ var lg=getLogoDataUrl(); if(lg) doc.addImage(lg,'PNG',M,12,22,22); }catch(e){}
   doc.setTextColor(ESP[0],ESP[1],ESP[2]); doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
   doc.text(INV_CO.name,M,40);
@@ -3498,7 +3588,6 @@ function buildInvoicePdf(h,items){
   rkv('No. Invoice',h.invoice_no,36); rkv('Tanggal',tgl(h.invoice_date),41);
   rkv('Jatuh Tempo',tgl(h.due_date),46); rkv('Periode',tgl(h.period_from)+' - '+tgl(h.period_to),51);
 
-  // Ditagihkan kepada
   var y=62;
   doc.setDrawColor(LINE[0],LINE[1],LINE[2]); doc.setLineWidth(0.3); doc.line(M,y-3,W-M,y-3);
   doc.setFont('helvetica','bold'); doc.setFontSize(8.3); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
@@ -3510,56 +3599,104 @@ function buildInvoicePdf(h,items){
   var ay=y+13+addr.length*4;
   if(h.pic_name||h.pic_number) doc.text('PIC: '+(h.pic_name||'-')+(h.pic_number?'  ·  '+h.pic_number:''),M,ay+1);
 
-  // Tabel
-  var body=[], n=0, seen={};
-  items.forEach(function(x){ if(x.type==='ITEM') seen[x.description]=(seen[x.description]||0)+1; });
-  items.filter(function(x){return x.type==='ITEM';}).forEach(function(x){
-    n++;
-    // CTG hanya ditampilkan kalau nama barang kembar di invoice ini (mis. SOYA SUKA TRIO)
-    var desc=x.description+((seen[x.description]>1&&x.ctg)?' ('+x.ctg+')':'');
-    body.push([n, desc, num(x.qty)+' '+(x.unit||''),
-      rp(x.unit_price)+' / '+num(x.usage)+' '+(x.unit||''), rp(x.amount)]);
+  // gabungkan barang yang sama dari semua order
+  var agg=[], ai={};
+  itemRows.forEach(function(x){
+    var k=x.ctg+'|'+x.description;
+    if(ai[k]===undefined){ ai[k]=agg.length; agg.push({description:x.description,ctg:x.ctg,unit:x.unit,usage:x.usage,unit_price:x.unit_price,qty:0,amount:0}); }
+    var a=agg[ai[k]]; a.qty+=Number(x.qty)||0; a.amount+=Number(x.amount)||0;
   });
-  items.filter(function(x){return x.type==='DELIVERY';}).forEach(function(x){
-    n++; body.push([n, x.description, '', '', rp(x.amount)]);
+  var body=[], n=0;
+  agg.forEach(function(x){
+    n++; body.push([n, desc(x), num(x.qty)+' '+(x.unit||''), rp(x.unit_price)+' / '+num(x.usage)+' '+(x.unit||''), rp(x.amount)]);
   });
-  doc.autoTable({
-    startY:ay+8, margin:{left:M,right:M},
-    head:[[{content:'No',styles:{halign:'center'}},'Deskripsi',
-      {content:'Jumlah',styles:{halign:'right'}},{content:'Harga',styles:{halign:'right'}},
-      {content:'Total',styles:{halign:'right'}}]],
-    body:body, theme:'grid',
-    headStyles:{fillColor:ESP,textColor:[255,255,255],fontStyle:'bold',fontSize:8.8},
-    bodyStyles:{textColor:ESP,fontSize:8.8,lineColor:LINE},
-    alternateRowStyles:{fillColor:[251,248,242]},
-    columnStyles:{0:{halign:'center',cellWidth:10},2:{halign:'right',cellWidth:30},3:{halign:'right',cellWidth:42},4:{halign:'right',cellWidth:32}}
-  });
-
-  // Ringkasan
-  var ty=doc.lastAutoTable.finalY+6;
-  if(ty>235){ doc.addPage(); ty=20; }
-  function sumRow(k,v,yy){
-    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
-    doc.text(k,W-M-50,yy); doc.setTextColor(ESP[0],ESP[1],ESP[2]); doc.text(v,W-M,yy,{align:'right'});
+  if(hasOrders){
+    if(feeRows.length){
+      var feeSum=feeRows.reduce(function(t,x){return t+(Number(x.amount)||0);},0);
+      n++; body.push([n,'Delivery Fee'+(feeRows.length>1?' ('+feeRows.length+'x pengiriman)':''),'','',rp(feeSum)]);
+    }
+  } else {
+    feeRows.forEach(function(x){ n++; body.push([n,x.description,'','',rp(x.amount)]); });   // invoice lama
   }
-  sumRow('Subtotal Barang',rp(h.subtotal_items),ty+2);
-  sumRow('Delivery Fee',rp(h.delivery_total),ty+8);
-  doc.setFillColor(ESP[0],ESP[1],ESP[2]); doc.roundedRect(W-M-80,ty+12,80,13,2,2,'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(10);
-  doc.text('TOTAL',W-M-75,ty+20.3);
-  doc.setFontSize(12.5); doc.text(rp(h.grand_total),W-M-5,ty+20.3,{align:'right'});
+  doc.autoTable(Object.assign({startY:ay+8,head:head5(),body:body,alternateRowStyles:{fillColor:[251,248,242]}},TBL));
 
-  // Pembayaran
-  var py=ty+34;
-  doc.setFillColor(CREAM[0],CREAM[1],CREAM[2]); doc.roundedRect(M,py,W-2*M,22,2,2,'F');
+  var ty=doc.lastAutoTable.finalY+6;
+  var disc=Number(h.discount_amount)||0;
+  if(ty>(disc?228:235)){ doc.addPage(); band(); ty=20; }
+  function sumRow(k,v,yy,col){
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
+    doc.text(k,W-M-62,yy);
+    var c=col||ESP; doc.setTextColor(c[0],c[1],c[2]); doc.text(v,W-M,yy,{align:'right'});
+  }
+  var sy=ty+2;
+  sumRow('Subtotal Barang',rp(h.subtotal_items),sy); sy+=6;
+  if(disc){
+    var dl=h.discount_type==='pct'?('Diskon ('+num(h.discount_value)+'%)'):'Diskon';
+    sumRow(dl,'- '+rp(disc),sy,[200,60,40]); sy+=6;
+  }
+  sumRow('Delivery Fee'+(hasOrders&&feeRows.length>1?' ('+feeRows.length+'x)':''),rp(h.delivery_total),sy); sy+=4;
+  doc.setFillColor(ESP[0],ESP[1],ESP[2]); doc.roundedRect(W-M-80,sy,80,13,2,2,'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('TOTAL',W-M-75,sy+8.3);
+  doc.setFontSize(12.5); doc.text(rp(h.grand_total),W-M-5,sy+8.3,{align:'right'});
+
+  var py=sy+22;
+  doc.setFillColor(CREAM[0],CREAM[1],CREAM[2]); doc.roundedRect(M,py,W-2*M,hasOrders?27:22,2,2,'F');
   doc.setTextColor(ESP[0],ESP[1],ESP[2]); doc.setFont('helvetica','bold'); doc.setFontSize(9);
   doc.text('PEMBAYARAN',M+5,py+7);
   doc.setFont('helvetica','normal'); doc.setFontSize(8.8);
   doc.text('Transfer ke '+INV_CO.bank+'  a.n  '+INV_CO.bankName,M+5,py+13);
   doc.text('Jatuh tempo: '+tgl(h.due_date)+' ('+(INV.due||30)+' hari setelah tanggal invoice)',M+5,py+18);
+  if(hasOrders){ doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]); doc.text('Rincian pemesanan per tanggal terlampir di halaman berikutnya.',M+5,py+23); }
+  footer();
 
-  doc.setFontSize(7.5); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
-  doc.text('Dokumen ini dibuat otomatis oleh sistem SoyaSuka Central Kitchen.',W/2,288,{align:'center'});
+  // ===== HALAMAN 2 — LAMPIRAN DETAIL PEMESANAN =====
+  if(hasOrders){
+    doc.addPage(); band();
+    doc.setTextColor(ESP[0],ESP[1],ESP[2]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+    doc.text('LAMPIRAN — DETAIL PEMESANAN',M,20);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.8); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
+    doc.text(h.invoice_no+'  ·  '+String(h.store_name||'')+'  ·  Periode '+tgl(h.period_from)+' - '+tgl(h.period_to),M,26);
+
+    var byNo={}, nos=[];
+    items.forEach(function(x){
+      var k=Number(x.order_no)||0;
+      if(!byNo[k]){ byNo[k]={date:x.order_date,items:[],fee:0}; nos.push(k); }
+      if(x.type==='DELIVERY') byNo[k].fee+=Number(x.amount)||0; else byNo[k].items.push(x);
+    });
+    nos.sort(function(a,b){ var da=byNo[a].date||'', db=byNo[b].date||''; return da===db?a-b:(da<db?-1:1); });
+
+    // Tiap order = 1 tabel sendiri, dijaga UTUH dalam satu halaman.
+    // Kalau sisa halaman tidak cukup → order itu pindah utuh ke halaman berikut.
+    var ROW=7.2, HEAD=8.5, BOTTOM=280, curY=32, needHead=true;
+    nos.forEach(function(k,idx){
+      var o=byNo[k], sub=0, m=0, body=[];
+      body.push([{content:tgl(o.date)+'   ·   Order '+(idx+1),colSpan:5,
+        styles:{fillColor:CREAM,fontStyle:'bold',textColor:ESP,fontSize:9,halign:'left'}}]);
+      o.items.forEach(function(x){
+        m++; sub+=Number(x.amount)||0;
+        body.push([m, desc(x), num(x.qty)+' '+(x.unit||''), rp(x.unit_price)+' / '+num(x.usage)+' '+(x.unit||''), rp(x.amount)]);
+      });
+      if(o.fee){ m++; sub+=o.fee; body.push([m,'Delivery Fee','','',rp(o.fee)]); }
+      body.push([{content:'Subtotal '+tgl(o.date),colSpan:4,styles:{halign:'right',fontStyle:'bold'}},
+                 {content:rp(sub),styles:{halign:'right',fontStyle:'bold'}}]);
+      var est=body.length*ROW+(needHead?HEAD:0);
+      if(curY+est>BOTTOM && curY>40){ footer(); doc.addPage(); band(); curY=16; needHead=true; est=body.length*ROW+HEAD; }
+      doc.autoTable(Object.assign({startY:curY,head:head5(),showHead:needHead?'firstPage':'never',body:body,
+        margin:{left:M,right:M,top:16,bottom:14},
+        didDrawPage:function(){ band(); }},TBL,{margin:{left:M,right:M,top:16,bottom:14}}));
+      curY=doc.lastAutoTable.finalY+(idx<nos.length-1?3:0);
+      needHead=false;
+    });
+
+    var fy=curY+6;
+    if(fy>BOTTOM){ footer(); doc.addPage(); band(); fy=20; }
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.3); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
+    var note='Total '+nos.length+' order.';
+    if(disc) note+=' Subtotal per tanggal belum termasuk diskon ('+rp(disc)+'), yang dipotong di halaman summary.';
+    doc.text(doc.splitTextToSize(note,W-2*M),M,fy);
+    footer();
+  }
   return doc;
 }
 window.buildInvoicePdf=buildInvoicePdf;
