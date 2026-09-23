@@ -3199,22 +3199,26 @@ function getLogoDataUrl(){
 //   Diskon memotong subtotal barang (bukan delivery fee)
 //   PDF: hal.1 summary gabungan · hal.2 lampiran detail per tanggal
 // =========================================================
-var INV={stores:[],items:[],orders:[],disc:{type:'pct',value:''},editNo:null,saved:null,tab:'form',due:30,_store:null};
+var INV={stores:[],items:[],pricelists:[],orders:[],disc:{type:'pct',value:''},editNo:null,saved:null,tab:'form',due:30,_store:null};
 var INV_CO={
   name:'PT SUKA SEGAR INDONESIA',
   addr:['Jl. Tanah Abang 1 No. 11F.','RT.008/RW.008, Kel. Petojo Selatan Kec. Gambir','Jakarta Pusat 10160, Indonesia'],
   bank:'BCA 035-338-2575', bankName:'PT SUKA SEGAR INDONESIA'
 };
 function invRp(n){ return 'Rp '+Math.round(Number(n)||0).toLocaleString('id-ID'); }
-function invAmt(it,q){ q=Number(q)||0; return q>0?Math.round(q/it.usage*it.price):0; }
-function invNewOrder(date){ return {date:date||S.today,qty:{},fee:'',open:true}; }
+// Harga item mengikuti pricelist order (Special / Internal / External)
+function invPrice(it,pl){ return (it.prices&&it.prices[pl])||0; }
+function invAmt(it,q,pl){ q=Number(q)||0; var pr=invPrice(it,pl); return (q>0&&pr>0)?Math.round(q/it.usage*pr):0; }
+function invItemsFor(pl){ return INV.items.filter(function(it){ return invPrice(it,pl)>0; }); }
+function invPlLabel(id){ var x=INV.pricelists.filter(function(p){return p.id===id;})[0]; return x?x.label:id; }
+function invNewOrder(date,pl){ return {date:date||S.today,pl:pl||(INV.pricelists[0]||{}).id||'special',qty:{},fee:'',open:true}; }
 
 async function renderInvoice(c){
   c.innerHTML=LOADING;
   try{
     var r=await api({action:'getInvoiceSetup',token:S.token,store:S.store});
     if(!r.ok){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
-    INV.stores=r.stores||[]; INV.items=r.items||[]; INV.due=r.due_days||30;
+    INV.stores=r.stores||[]; INV.items=r.items||[]; INV.pricelists=r.pricelists||[]; INV.due=r.due_days||30;
   }catch(e){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; return; }
   if(!INV.orders.length) INV.orders=[invNewOrder()];
   c.innerHTML='<div id="inv-pills"></div><div id="inv-body"></div>';
@@ -3245,7 +3249,7 @@ window.invNew=invNew;
 // ---------- hitungan (sama persis dgn server) ----------
 function invOrderCalc(o){
   var sub=0, n=0;
-  INV.items.forEach(function(it){ var a=invAmt(it,o.qty[it.key]); if(a){ sub+=a; n++; } });
+  INV.items.forEach(function(it){ var a=invAmt(it,o.qty[it.key],o.pl); if(a){ sub+=a; n++; } });
   var fee=Math.max(0,Math.round(Number(o.fee)||0));
   return {sub:sub,fee:fee,n:n,total:sub+fee};
 }
@@ -3303,16 +3307,24 @@ window.invStoreInfo=invStoreInfo;
 function invRenderOrders(){
   var el=document.getElementById('inv-orders'); if(!el) return;
   // kelompok CTG sekali saja
-  var groups=[], gi={};
-  INV.items.forEach(function(it,i){
-    if(gi[it.ctg]===undefined){ gi[it.ctg]=groups.length; groups.push({ctg:it.ctg,rows:[]}); }
-    groups[gi[it.ctg]].rows.push(i);
-  });
+  function groupsFor(pl){
+    var g=[], gi={};
+    INV.items.forEach(function(it,i){
+      if(invPrice(it,pl)<=0) return;                 // tidak dijual di pricelist ini
+      if(gi[it.ctg]===undefined){ gi[it.ctg]=g.length; g.push({ctg:it.ctg,rows:[]}); }
+      g[gi[it.ctg]].rows.push(i);
+    });
+    return g;
+  }
   el.innerHTML=INV.orders.map(function(o,oi){
+    var groups=groupsFor(o.pl);
     var x=invOrderCalc(o);
     var head='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
       '<span style="font-weight:800;color:var(--brown-deep);min-width:64px">Order '+(oi+1)+'</span>'+
-      '<input class="fi2" type="date" value="'+mEsc(o.date||'')+'" onchange="INV.orders['+oi+'].date=this.value;invRefreshHead('+oi+')" style="max-width:160px">'+
+      '<input class="fi2" type="date" value="'+mEsc(o.date||'')+'" onchange="INV.orders['+oi+'].date=this.value;invRefreshHead('+oi+')" style="max-width:150px">'+
+      '<select class="fi2" onchange="invSetPl('+oi+',this.value)" style="max-width:170px" title="Sumber harga">'+
+        INV.pricelists.map(function(pl){return '<option value="'+pl.id+'"'+(o.pl===pl.id?' selected':'')+'>'+mEsc(pl.label)+'</option>';}).join('')+
+      '</select>'+
       '<span id="inv-oh-'+oi+'" style="flex:1;font-size:12.5px;color:var(--brown-soft);text-align:right"></span>'+
       '<button class="ftab" style="padding:5px 11px" onclick="invToggle('+oi+')">'+(o.open?'▲ Lipat':'▼ Buka')+'</button>'+
       (INV.orders.length>1?'<button class="ftab" style="padding:5px 10px;color:var(--red)" onclick="invDelOrder('+oi+')" title="Hapus order">✕</button>':'')+
@@ -3326,12 +3338,14 @@ function invRenderOrders(){
           g.rows.map(function(i){
             var it=INV.items[i], v=o.qty[it.key];
             return '<tr><td style="font-weight:600">'+mEsc(it.name)+'</td>'+
-              '<td style="text-align:right;white-space:nowrap;font-size:11.5px;color:var(--brown-soft)">'+invRp(it.price)+'<br>/ '+Number(it.usage).toLocaleString('id-ID')+' '+mEsc(it.unit)+'</td>'+
+              '<td style="text-align:right;white-space:nowrap;font-size:11.5px;color:var(--brown-soft)">'+invRp(invPrice(it,o.pl))+'<br>/ '+Number(it.usage).toLocaleString('id-ID')+' '+mEsc(it.unit)+'</td>'+
               '<td style="text-align:right;white-space:nowrap"><input type="number" min="0" step="any" placeholder="0" value="'+(v!==undefined&&v!==''?v:'')+'" oninput="invQ('+oi+','+i+',this.value)" style="width:86px;text-align:right"> '+
                 '<span style="font-size:12px;color:var(--brown-soft)">'+mEsc(it.unit)+'</span></td>'+
               '<td style="text-align:right;font-weight:700;white-space:nowrap" id="inv-a-'+oi+'-'+i+'">—</td></tr>';
           }).join('');
       }).join('')+
+      '<tr><td colspan="4" style="background:#FBF8F2;font-size:11.5px;color:var(--brown-soft);padding:6px 10px">Harga memakai <b>'+mEsc(invPlLabel(o.pl))+'</b>'+
+        (groups.length?'':' — belum ada barang berharga di pricelist ini')+'</td></tr>'+
       '<tr><td style="font-weight:700">🚚 Delivery Fee</td><td></td>'+
         '<td style="text-align:right;white-space:nowrap"><span style="font-size:12px;color:var(--brown-soft)">Rp</span> <input type="number" min="0" step="1" placeholder="0" value="'+(o.fee===''?'':o.fee)+'" oninput="INV.orders['+oi+'].fee=this.value;invCalc()" style="width:110px;text-align:right"></td>'+
         '<td></td></tr>'+
@@ -3345,18 +3359,29 @@ function invRefreshHead(oi){
   var x=invOrderCalc(o);
   el.innerHTML=(x.n?x.n+' barang · ':'')+(x.fee?'ongkir '+invRp(x.fee)+' · ':'')+'<b style="color:var(--brown-deep)">'+invRp(x.total)+'</b>';
   INV.items.forEach(function(it,i){
-    var a=invAmt(it,o.qty[it.key]), c=document.getElementById('inv-a-'+oi+'-'+i);
+    var a=invAmt(it,o.qty[it.key],o.pl), c=document.getElementById('inv-a-'+oi+'-'+i);
     if(c){ c.textContent=a?invRp(a):'—'; c.style.color=a?'var(--green)':''; }
   });
 }
 window.invRefreshHead=invRefreshHead;
 
 function invQ(oi,i,v){ INV.orders[oi].qty[INV.items[i].key]=v; invCalc(); }
+function invSetPl(oi,pl){
+  var o=INV.orders[oi];
+  var lost=INV.items.filter(function(it){ return (Number(o.qty[it.key])||0)>0 && invPrice(it,pl)<=0; });
+  if(lost.length&&!confirm('Barang ini tidak punya harga di '+invPlLabel(pl)+', jadi isiannya akan dikosongkan:\n• '+
+      lost.map(function(x){return x.name;}).join('\n• ')+'\n\nLanjut ganti pricelist?')){
+    invRenderOrders(); return;
+  }
+  lost.forEach(function(it){ delete o.qty[it.key]; });
+  o.pl=pl; invRenderOrders(); invCalc();
+}
+window.invSetPl=invSetPl;
 function invToggle(oi){ INV.orders[oi].open=!INV.orders[oi].open; invRenderOrders(); invCalc(); }
 function invAddOrder(){
   INV.orders.forEach(function(o){ if(invOrderCalc(o).total) o.open=false; });   // lipat yang sudah terisi
   var last=INV.orders[INV.orders.length-1];
-  INV.orders.push(invNewOrder(last&&last.date?last.date:S.today));
+  INV.orders.push(invNewOrder(last&&last.date?last.date:S.today,last&&last.pl));
   invRenderOrders(); invCalc();
   var el=document.getElementById('inv-orders'); if(el&&el.lastElementChild) el.lastElementChild.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -3391,7 +3416,7 @@ function invCalc(){
   var dLbl=INV.disc.type==='pct'?('Diskon ('+(Number(INV.disc.value)||0)+'%)'):'Diskon';
   function row(k,v,cls){ return '<div style="display:flex;justify-content:space-between;font-size:13px;opacity:.85;margin-bottom:4px"><span>'+k+'</span><span>'+v+'</span></div>'; }
   el.innerHTML=
-    '<div style="font-size:11.5px;opacity:.7;margin-bottom:8px">'+INV.orders.length+' order · periode '+invPeriodLabel()+'</div>'+
+    '<div style="font-size:11.5px;opacity:.7;margin-bottom:8px">'+INV.orders.length+' order · periode '+invPeriodLabel()+' · '+invPlSummary()+'</div>'+
     row('Subtotal Barang',invRp(t.sub))+
     (t.disc?row(dLbl,'−'+invRp(t.disc)):'')+
     row('Delivery Fee'+(t.kirim>1?' ('+t.kirim+'x)':''),invRp(t.del))+
@@ -3399,6 +3424,14 @@ function invCalc(){
 }
 window.invCalc=invCalc;
 
+// Satu invoice normalnya pakai 1 pricelist. Kalau tercampur, ingatkan.
+function invPlSummary(){
+  var used={}, list=[];
+  INV.orders.forEach(function(o){ if(invOrderCalc(o).total&&!used[o.pl]){ used[o.pl]=1; list.push(o.pl); } });
+  if(!list.length) return 'harga —';
+  if(list.length===1) return 'harga '+mEsc(invPlLabel(list[0]));
+  return '<span style="color:#FFD9A0">⚠ pricelist campuran: '+list.map(invPlLabel).map(mEsc).join(' + ')+'</span>';
+}
 function invPeriodLabel(){
   var d=INV.orders.filter(function(o){return o.date&&invOrderCalc(o).total;}).map(function(o){return o.date;}).sort();
   if(!d.length) return '—';
@@ -3415,7 +3448,7 @@ async function invSave(){
     var o=INV.orders[oi], x=invOrderCalc(o);
     if(!x.total) continue;
     if(!o.date) return err('Order '+(oi+1)+': tanggal belum diisi');
-    payload.push({date:o.date,fee:x.fee,
+    payload.push({date:o.date,price_list:o.pl,fee:x.fee,
       lines:INV.items.map(function(it){return{key:it.key,qty:Number(o.qty[it.key])||0};}).filter(function(l){return l.qty>0;})});
   }
   if(!payload.length) return err('Belum ada barang atau delivery fee yang diisi');
@@ -3491,14 +3524,20 @@ async function invOpen(i,mode){
     r.items.forEach(function(it){
       var no=it.order_no;
       if(no===''||no===undefined){ legacy=true; no=1; }
-      if(!byNo[no]){ byNo[no]={date:it.order_date||h.period_from||S.today,qty:{},fee:0,open:false}; order.push(no); }
+      if(!byNo[no]){ byNo[no]={date:it.order_date||h.period_from||S.today,pl:'',qty:{},fee:0,open:false}; order.push(no); }
       var o=byNo[no];
       if(it.type==='DELIVERY'){ o.fee=(Number(o.fee)||0)+Number(it.amount||0); return; }   // invoice lama bisa punya >1 fee
+      if(!o.pl&&it.price_list) o.pl=it.price_list;
       var key=String(it.ctg||'').toUpperCase()+'|'+it.description;
       if(INV.items.some(function(m){return m.key===key;})) o.qty[key]=String((Number(o.qty[key])||0)+Number(it.qty||0));
       else missing.push(it.description);
     });
-    INV.orders=order.sort(function(a,b){return a-b;}).map(function(n){ var o=byNo[n]; o.fee=o.fee?String(o.fee):''; return o; });
+    var plFallback=(INV.pricelists[0]||{}).id||'special', noPl=false;
+    INV.orders=order.sort(function(a,b){return a-b;}).map(function(n){
+      var o=byNo[n]; o.fee=o.fee?String(o.fee):'';
+      if(!o.pl){ o.pl=plFallback; noPl=true; }
+      return o;
+    });
     if(!INV.orders.length) INV.orders=[invNewOrder()];
     INV.orders[0].open=true;
     INV.disc={type:h.discount_type||'pct',value:h.discount_value?String(h.discount_value):''};
@@ -3506,6 +3545,7 @@ async function invOpen(i,mode){
     invSwitch('form');
     var notes=[];
     if(legacy) notes.push('Invoice ini dibuat sebelum fitur multi-order, jadi semua barang masuk sebagai Order 1. Cek & sesuaikan tanggalnya.');
+    if(noPl) notes.push('Invoice ini dibuat sebelum ada pilihan pricelist, jadi pricelist-nya diisi "'+invPlLabel(plFallback)+'". Cek dulu sebelum simpan — harga akan dihitung ulang dari pricelist yang terpilih.');
     if(missing.length) notes.push('Barang ini sudah tidak ada di RECAP (atau harganya kosong), jadi tidak ikut:\n• '+missing.join('\n• '));
     if(notes.length) alert(notes.join('\n\n'));
   }catch(e){ alert('❌ '+e.message); }
