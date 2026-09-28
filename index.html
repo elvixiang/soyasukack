@@ -270,6 +270,9 @@ select.fi2{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns
 .izin-badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 8px;border-radius:999px;white-space:nowrap}
 .izin-badge.sakit{background:#EAF1F8;color:var(--blue)}
 .izin-badge.unpaid{background:#FDF1E7;color:var(--orange)}
+.izin-badge.ph{background:#EDF8EE;color:var(--green)}
+.izin-badge.lain{background:#F5EFE6;color:var(--gold)}
+.telat{color:var(--red);font-weight:700}
 .survey-overlay{position:fixed;inset:0;background:rgba(62,52,42,.72);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px}
 .survey-card{background:var(--surface);border-radius:20px;padding:24px;max-width:460px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .survey-badge{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;background:var(--gold);color:#fff;padding:3px 10px;border-radius:999px;margin-bottom:10px}
@@ -1016,7 +1019,7 @@ async function renderDashboard(c){
   var bits=[];
   if(canTab('absensi')){
     var abs=sd.absensiToday||null;
-    var ci=abs&&abs.clock_in_time?fmtTime(abs.clock_in_time):'';
+    var ci=abs&&abs.clock_in_time?(fmtTime(abs.clock_in_time)+(isLate(abs.clock_in_time)?' (telat)':'')):'';
     var co=abs&&abs.clock_out_time?fmtTime(abs.clock_out_time):'';
     bits.push({ico:'🕐',lbl:'Absensi',val: ci?(ci+(co?(' → '+co):' · belum pulang')):'Belum clock in',ok:!!ci,go:'absensi'});
   }
@@ -1791,10 +1794,11 @@ async function renderAbsensi(c){
     var btnLbl=type==='ci'?'Simpan Clock In':'Simpan Clock Out';
     if(done){
       var jam=fmtTime(tm);
+      var telat=(type==='ci'&&isLate(tm));
       return '<div class="card" style="margin-bottom:0">'+
         '<div style="font-size:13px;font-weight:700;color:'+color+';margin-bottom:10px">'+label+'</div>'+
         (url?'<img src="'+url+'" style="width:100%;max-height:200px;object-fit:cover;border-radius:12px;cursor:pointer" onclick="openAbsPhoto(\''+url+'\')">':'')+
-        '<div class="save-msg ok" style="display:block;margin-top:10px">✅ Sudah '+(type==='ci'?'Clock In':'Clock Out')+' pukul '+jam+'</div>'+
+        '<div class="save-msg '+(telat?'err':'ok')+'" style="display:block;margin-top:10px">'+(telat?'⚠️':'✅')+' Sudah '+(type==='ci'?'Clock In':'Clock Out')+' pukul '+jam+(telat?' — <b>TELAT</b> (batas '+LATE_AFTER+')':'')+'</div>'+
         '</div>';
     }
     return '<div class="card" style="margin-bottom:0">'+
@@ -1835,10 +1839,17 @@ async function renderAbsensi(c){
   '<div class="card">'+
   '<div class="card-title">📝 Ajukan Izin</div>'+
   '<div style="font-size:12.5px;color:var(--brown-soft);background:var(--surface2);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.5">Kalau kamu tidak masuk (hari ini atau tanggal depan, mis. acara minggu depan), ajukan izin di sini. Untuk <b>Izin Sakit</b>, foto surat dokter / bukti <b>wajib</b> dilampirkan.</div>'+
+  '<div style="font-size:12px;color:var(--brown-soft);background:#FBF8F2;border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:12px;line-height:1.6">'+
+    '<b>Izin Sakit</b> — sakit, wajib lampirkan surat dokter / bukti.<br>'+
+    '<b>PH</b> — ganti libur karena tanggal merah.<br>'+
+    '<b>Izin Lain</b> — keperluan penting seperti berduka, menikah, melahirkan, atau wisuda.<br>'+
+    '<b>Unpaid Leave</b> — izin di luar semua itu. <span style="color:var(--red);font-weight:700">Memotong gaji.</span>'+
+  '</div>'+
   '<div class="form-grid">'+
   '<div class="fg"><label>Tanggal <span style="font-weight:400;color:var(--brown-soft)">(boleh tanggal depan)</span></label><input class="fi2" type="date" id="iz-date" value="'+S.today+'"></div>'+
-  '<div class="fg"><label>Jenis Izin</label><select class="fi2" id="iz-jenis" onchange="izJenisHint()"><option value="">— Pilih —</option><option value="Izin Sakit">Izin Sakit</option><option value="Unpaid Leave">Unpaid Leave</option></select></div>'+
+  '<div class="fg"><label>Jenis Izin</label><select class="fi2" id="iz-jenis" onchange="izJenisHint()"><option value="">— Pilih —</option><option value="Izin Sakit">Izin Sakit</option><option value="PH">PH (ganti libur tanggal merah)</option><option value="Izin Lain">Izin Lain</option><option value="Unpaid Leave">Unpaid Leave</option></select></div>'+
   '<div class="fg full"><label>Keterangan</label><input class="fi2" id="iz-ket" placeholder="Contoh: demam, sudah ke klinik" maxlength="200"></div>'+
+  '<div class="fg full"><div id="iz-jenis-hint" style="font-size:12px;color:var(--brown-soft);margin-top:-4px"></div></div>'+
   '<div class="fg full"><label id="iz-photo-lbl">Foto Surat / Bukti (opsional)</label>'+
     '<div class="photo-up" onclick="document.getElementById(\'iz-photo-inp\').click()">'+
     '<div id="iz-photo-preview">📎 Klik untuk upload foto<br><small>Boleh dari galeri · otomatis dikompres</small></div>'+
@@ -1950,7 +1961,7 @@ function renderApprSection(){
   if(APPR_TAB==='izin'){
     head='<th>Tanggal</th><th>'+apprStageHead()+'</th><th>Nama</th><th>Jenis</th><th>Keterangan</th><th></th>';
     rows=list.map(function(z,i){
-      var cls=z.jenis==='Izin Sakit'?'sakit':'unpaid';
+      var cls=izDef(z.jenis).cls;
       return '<tr><td style="white-space:nowrap;font-weight:600">'+fmtDateShort(z.date)+'</td>'+
         '<td>'+apprStageCell(z)+'</td>'+
         '<td style="font-weight:600">'+z.display_name+'</td>'+
@@ -2178,6 +2189,14 @@ function izJenisHint(){
   if(l) l.innerHTML = j==='Izin Sakit'
     ? 'Foto Surat / Bukti <span style="color:var(--red);font-weight:700">(WAJIB untuk Izin Sakit)</span>'
     : 'Foto Surat / Bukti (opsional)';
+  var hints={
+    'Izin Sakit':'Wajib lampirkan foto surat dokter atau bukti lain.',
+    'PH':'Ganti libur karena tanggal merah. Tidak memotong gaji.',
+    'Izin Lain':'Untuk keperluan penting: berduka, menikah, melahirkan, wisuda, dsb. Tulis keperluannya di Keterangan.',
+    'Unpaid Leave':'⚠️ Izin ini MEMOTONG GAJI. Pakai ini kalau tidak masuk kategori di atas.'
+  };
+  var hb=document.getElementById('iz-jenis-hint');
+  if(hb) hb.innerHTML=hints[j]?(j==='Unpaid Leave'?'<span style="color:var(--red)">'+hints[j]+'</span>':hints[j]):'';
 }
 window.izJenisHint=izJenisHint;
 
@@ -2223,7 +2242,7 @@ async function loadMyIzin(){
     if(!rows.length){ box.innerHTML='<div style="font-size:12px;color:var(--brown-soft);text-align:center;padding:6px">Belum ada izin bulan ini</div>'; return; }
     box.innerHTML='<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--brown-soft);margin-bottom:8px">Izin bulan ini</div>'+
       rows.map(function(z){
-        var cls=z.jenis==='Izin Sakit'?'sakit':'unpaid';
+        var cls=izDef(z.jenis).cls;
         var st=z.status||'Approved';
         var stBadge=decisionBadge(st,z.reject_reason);
         return '<div class="izin-row">'+
@@ -2520,33 +2539,39 @@ async function loadCekAbsensi(){
       return false;
     }
     var rekap=staffList.map(function(u){
-      var hadir=0,jam=0,sakit=0,unpaid=0,valid=0;
+      var hadir=0,jam=0,sakit=0,unpaid=0,ph=0,lain=0,telat=0,valid=0;
       dates.forEach(function(d){
         if(isBlack(u,d)) return;             // di luar masa kerja → tidak dihitung
         valid++;
         var a=(byDate[d]||{})[u];
         var z=(izByDate[d]||{})[u];
-        if(a&&a.ci_time){ hadir++; jam+=jamKerja(a.ci_time,a.co_time); }
-        else if(z){ if(z.jenis==='Izin Sakit')sakit++; else unpaid++; }
+        if(a&&a.ci_time){ hadir++; jam+=jamKerja(a.ci_time,a.co_time); if(isLate(a.ci_time)) telat++; }
+        else if(z){
+          var t=izDef(z.jenis).tag;
+          if(t==='SAKIT')sakit++; else if(t==='PH')ph++; else if(t==='LAIN')lain++; else unpaid++;
+        }
       });
-      return {u:u,nama:staffSet[u],hadir:hadir,jam:jam,sakit:sakit,unpaid:unpaid,
-              off:valid-hadir-sakit-unpaid};
+      return {u:u,nama:staffSet[u],hadir:hadir,jam:jam,telat:telat,sakit:sakit,unpaid:unpaid,ph:ph,lain:lain,
+              off:valid-hadir-sakit-unpaid-ph-lain};
     });
 
     var csvBtn='<button class="ftab" style="padding:6px 14px" onclick="exportAbsensiXLSX()">⬇ Export Excel</button>';
     var html='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
       '<div class="sec" style="margin:0">📊 Rekap ('+totalHari+' hari)</div>'+csvBtn+'</div>'+
-      '<div class="tbl-wrap" style="overflow-x:auto;margin-bottom:6px"><table class="tbl" style="min-width:640px"><thead><tr>'+
-      '<th>Nama</th><th style="text-align:center">Hari Kerja</th><th style="text-align:center">Total Jam</th>'+
-      '<th style="text-align:center">Sakit</th><th style="text-align:center">Unpaid</th>'+
+      '<div class="tbl-wrap" style="overflow-x:auto;margin-bottom:6px"><table class="tbl" style="min-width:820px"><thead><tr>'+
+      '<th>Nama</th><th style="text-align:center">Hari Kerja</th><th style="text-align:center">Telat</th><th style="text-align:center">Total Jam</th>'+
+      '<th style="text-align:center">Sakit</th><th style="text-align:center">PH</th><th style="text-align:center">Izin Lain</th><th style="text-align:center">Unpaid</th>'+
       '<th style="text-align:center">Off / Tidak Tercatat</th></tr></thead><tbody>'+
       rekap.map(function(k){
         return '<tr>'+
           '<td style="font-weight:600"><span onclick="showStaffDetail(\''+k.u+'\')" style="color:var(--brown-deep);cursor:pointer;text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:2px">'+k.nama+'</span></td>'+
           '<td style="text-align:center;font-weight:700">'+k.hadir+'</td>'+
+          '<td style="text-align:center'+(k.telat?';color:var(--red);font-weight:700':';color:var(--brown-soft)')+'">'+k.telat+'</td>'+
           '<td style="text-align:center">'+k.jam.toFixed(1)+' jam</td>'+
-          '<td style="text-align:center"'+(k.sakit?' style="text-align:center;color:var(--blue);font-weight:700"':'')+'>'+k.sakit+'</td>'+
-          '<td style="text-align:center"'+(k.unpaid?' style="text-align:center;color:var(--orange);font-weight:700"':'')+'>'+k.unpaid+'</td>'+
+          '<td style="text-align:center'+(k.sakit?';color:var(--blue);font-weight:700':'')+'">'+k.sakit+'</td>'+
+          '<td style="text-align:center'+(k.ph?';color:var(--green);font-weight:700':'')+'">'+k.ph+'</td>'+
+          '<td style="text-align:center'+(k.lain?';color:var(--gold);font-weight:700':'')+'">'+k.lain+'</td>'+
+          '<td style="text-align:center'+(k.unpaid?';color:var(--orange);font-weight:700':'')+'">'+k.unpaid+'</td>'+
           '<td style="text-align:center;color:var(--brown-soft)">'+k.off+'</td>'+
         '</tr>';
       }).join('')+'</tbody></table></div>'+
@@ -2565,16 +2590,17 @@ async function loadCekAbsensi(){
         if(isBlack(u,d)) return '<td style="background:#111;padding:0"></td>';
         var z=(izByDate[d]||{})[u];
         if(z){
-          var col=z.jenis==='Izin Sakit'?'var(--blue)':'var(--orange)';
-          var tag=z.jenis==='Izin Sakit'?'SAKIT':'UNPAID';
+          var dz=izDef(z.jenis), col=dz.col, tag=dz.tag;
           var t=(z.keterangan||z.jenis).replace(/"/g,'');
           return '<td style="font-size:11px;font-weight:700;color:'+col+';cursor:pointer" title="'+t+'" onclick="showIzinDetail('+JSON.stringify(JSON.stringify(z)).replace(/"/g,'&quot;')+')">'+tag+'</td>';
         }
         var sd=(byDate[d]||{})[u];
         if(!sd) return '<td style="color:var(--line);font-size:12px">–</td>';
+        var late=isLate(sd.ci_time);
         var ciTxt=sd.ci_time?fmtTime(sd.ci_time):'–';
+        var ci=sd.ci_url?'<span onclick="openAbsPhoto(\''+sd.ci_url+'\')" style="cursor:pointer;text-decoration:underline;font-weight:600;color:'+(late?'var(--red)':'var(--gold)')+'" title="'+(late?'TELAT (lewat '+LATE_AFTER+') · ':'')+'Lihat foto Clock In">'+ciTxt+'</span>'
+          :(late?'<span class="telat" title="TELAT (lewat '+LATE_AFTER+')">'+ciTxt+'</span>':ciTxt);
         var coTxt=sd.co_time?fmtTime(sd.co_time):'–';
-        var ci=sd.ci_url?'<span onclick="openAbsPhoto(\''+sd.ci_url+'\')" style="cursor:pointer;color:var(--gold);text-decoration:underline;font-weight:600" title="Lihat foto Clock In">'+ciTxt+'</span>':ciTxt;
         var co=sd.co_url?'<span onclick="openAbsPhoto(\''+sd.co_url+'\')" style="cursor:pointer;color:var(--gold);text-decoration:underline;font-weight:600" title="Lihat foto Clock Out">'+coTxt+'</span>':coTxt;
         return '<td style="font-size:12px">'+ci+' | '+co+'</td>';
       }).join('')+'</tr>';
@@ -2990,11 +3016,36 @@ window.showIzinDetail=showIzinDetail;
 
 function caHHMM(v){ var c=clockWIB(v); return c?c.hm:''; }
 
+// ── Jenis izin: satu sumber untuk semua tampilan ──
+// tag = teks pendek di tabel · cls = kelas badge · col = warna
+var IZ_DEFS={
+  'Izin Sakit'  :{tag:'SAKIT', cls:'sakit', col:'var(--blue)'},
+  'Unpaid Leave':{tag:'UNPAID',cls:'unpaid',col:'var(--orange)'},
+  'PH'          :{tag:'PH',    cls:'ph',    col:'var(--green)'},
+  'Izin Lain'   :{tag:'LAIN',  cls:'lain',  col:'var(--gold)'}
+};
+function izDef(j){ return IZ_DEFS[String(j||'').trim()]||{tag:String(j||'IZIN').toUpperCase(),cls:'unpaid',col:'var(--orange)'}; }
+window.izDef=izDef;
+
+// ── Batas jam masuk. Clock in LEWAT jam ini dihitung TELAT. ──
+var LATE_AFTER='09:30';
+function isLate(ciTime){
+  var c=clockWIB(ciTime);
+  return !!(c&&c.hm&&c.hm>LATE_AFTER);
+}
+// Jam clock-in siap tampil: merah + label TELAT kalau lewat batas.
+function ciDisplay(ciTime,withTag){
+  var t=fmtTime(ciTime); if(!t) return '–';
+  if(!isLate(ciTime)) return t;
+  return '<span class="telat" title="Masuk lewat '+LATE_AFTER+'">'+t+(withTag?' <span style="font-size:9.5px">TELAT</span>':'')+'</span>';
+}
+window.isLate=isLate; window.ciDisplay=ciDisplay;
+
 function caStatus(u,d){
   var a=(_CA.byDate[d]||{})[u];
-  if(a&&a.ci_time) return 'V';
+  if(a&&a.ci_time) return isLate(a.ci_time)?'TELAT':'V';
   var z=(_CA.izByDate[d]||{})[u];
-  if(z) return (z.jenis==='Izin Sakit')?'SAKIT':'UNPAID';
+  if(z) return izDef(z.jenis).tag;
   return 'OFF';
 }
 function caBlack(u,d){
@@ -3025,11 +3076,11 @@ function renderStaffDetail(){
       ctrl='<button class="ftab" style="padding:4px 9px" onclick="caSaveEdit(\''+d+'\')">Simpan</button> <button class="ftab" style="padding:4px 9px" onclick="caCancelEdit()">Batal</button>';
     } else if(z){
       ci='–'; co='–';
-      status='<b style="color:'+(z.jenis==='Izin Sakit'?'var(--blue)':'var(--orange)')+'">'+(z.jenis==='Izin Sakit'?'SAKIT':'UNPAID')+'</b>';
+      status='<b style="color:'+izDef(z.jenis).col+'">'+izDef(z.jenis).tag+'</b>';
       ctrl='<span style="color:var(--line)">—</span>';
     } else if(a&&a.ci_time){
-      ci=fmtTime(a.ci_time)||'–'; co=a.co_time?fmtTime(a.co_time):'–';
-      status='<b style="color:var(--green)">V</b>';
+      ci=ciDisplay(a.ci_time)||'–'; co=a.co_time?fmtTime(a.co_time):'–';
+      status=isLate(a.ci_time)?'<b class="telat">TELAT</b>':'<b style="color:var(--green)">V</b>';
       ctrl=canEdit?('<button class="ftab" style="padding:4px 9px" onclick="caEditDay(\''+d+'\')">✏️</button> <button class="ftab" style="padding:4px 9px;color:var(--red)" onclick="caDeleteDay(\''+d+'\')">🗑️</button>'):'';
     } else {
       ci='–'; co='–'; status='<span style="color:var(--brown-soft)">OFF</span>'; ctrl='';
@@ -3128,7 +3179,11 @@ async function exportAbsensiXLSX(){
         if(col===1){ cell.font={bold:true}; return; }
         cell.alignment={horizontal:'center'};
         var d=dates[col-2];
-        if(d && caBlack(u,d)){ cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}}; }
+        if(d && caBlack(u,d)){ cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}}; return; }
+        // warna status biar kebaca juga di Excel
+        var CW={TELAT:'FFC0392B',SAKIT:'FF2E6DA4',PH:'FF2E8B57',LAIN:'FFB97B51',UNPAID:'FFD98324'};
+        var cv=CW[String(cell.value||'')];
+        if(cv) cell.font={bold:true,color:{argb:cv}};
       });
     });
     // Lebar kolom
