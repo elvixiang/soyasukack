@@ -813,6 +813,7 @@ var NAV_DEFS = {
     {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:''},
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
     {id:'produksi-view',ico:'🏭',lbl:'Cek Hasil Produksi',sec:''},
+    {id:'so-value',ico:'💰',lbl:'Cek Value SO',sec:''},
     {id:'invoice',ico:'🧾',lbl:'Create Invoice',sec:'Keuangan'},
     {id:'payslip',ico:'🧾',lbl:'Generate Payslip',sec:'HR'},
     {id:'payslip-history',ico:'📄',lbl:'Riwayat Payslip',sec:''},
@@ -829,6 +830,7 @@ var NAV_DEFS = {
     {id:'wastage-view',ico:'🗑️',lbl:'Cek Wastage',sec:'Monitoring'},
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
     {id:'produksi-view',ico:'🏭',lbl:'Cek Hasil Produksi',sec:''},
+    {id:'so-value',ico:'💰',lbl:'Cek Value SO',sec:''},
     {id:'invoice',ico:'🧾',lbl:'Create Invoice',sec:'Keuangan'},
   ]
 };
@@ -862,7 +864,7 @@ function buildNav(){
 function navigateTo(id){
   if(!canTab(id)){ id='dashboard'; }
   document.querySelectorAll('.ni').forEach(function(el){el.classList.toggle('active',el.dataset.id===id);});
-  var titles={dashboard:'Dashboard',absensi:'Absensi',wastage:'Wastage',so:'Stock Opname',inbound:'Inbound','inbound-view':'Cek Inbound',invoice:'Create Invoice','wastage-view':'Wastage','cek-absensi':'Cek Absensi','overtime-rekap':'Rekap Overtime','izin-approval':'Persetujuan','payslip':'Generate Payslip','payslip-history':'Riwayat Payslip'};
+  var titles={dashboard:'Dashboard',absensi:'Absensi',wastage:'Wastage',so:'Stock Opname',inbound:'Inbound','inbound-view':'Cek Inbound','so-value':'Cek Value SO',invoice:'Create Invoice','wastage-view':'Wastage','cek-absensi':'Cek Absensi','overtime-rekap':'Rekap Overtime','izin-approval':'Persetujuan','payslip':'Generate Payslip','payslip-history':'Riwayat Payslip'};
   document.getElementById('tb-title').textContent=titles[id]||id;
   renderPage(id);
 }
@@ -940,6 +942,7 @@ async function renderPage(id){
     case 'produksi':        await renderProduksi(c); break;
     case 'produksi-view':   await renderProduksiView(c); break;
     case 'invoice':         await renderInvoice(c); break;
+    case 'so-value':        await renderSOValue(c); break;
     case 'wastage-view':    await renderWastageView(c); break;
     case 'cek-absensi':     await renderCekAbsensi(c); break;
     case 'overtime-rekap':  await renderOvertimeRekap(c); break;
@@ -982,7 +985,7 @@ async function renderDashboard(c){
   [['absensi','🕐','Absensi'],['wastage','🗑️','Input Wastage'],['so','📦','Stock Opname'],
    ['inbound','📥','Inbound'],['produksi','🏭','Hasil Produksi'],['izin-approval','📝','Persetujuan'],['cek-absensi','🕐','Cek Absensi'],
    ['overtime-rekap','⏱️','Rekap Overtime'],['wastage-view','🗑️','Cek Wastage'],
-   ['inbound-view','🧾','Cek Inbound'],['invoice','💳','Create Invoice'],['produksi-view','🏭','Cek Hasil Produksi'],['payslip','🧾','Generate Payslip'],
+   ['inbound-view','🧾','Cek Inbound'],['so-value','💰','Cek Value SO'],['invoice','💳','Create Invoice'],['produksi-view','🏭','Cek Hasil Produksi'],['payslip','🧾','Generate Payslip'],
    ['payslip-history','📄','Riwayat Payslip']]
    .forEach(function(t){ if(canTab(t[0])) short.push(t); });
 
@@ -3795,6 +3798,80 @@ function buildInvoicePdf(h,items){
   return doc;
 }
 window.buildInvoicePdf=buildInvoicePdf;
+
+
+// =========================================================
+// CEK VALUE STOCK OPNAME (Owner / Admin)
+//   nilai = qty ÷ isi-per-pack × harga ING MASTER
+//   (kalau isi-per-pack kosong, harga dianggap per satuan dasar)
+// =========================================================
+async function renderSOValue(c){
+  c.innerHTML=LOADING;
+  var r;
+  try{ r=await api({action:'getSOValue',token:S.token,store:S.store,date:window._sovDate||''}); }
+  catch(e){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; return; }
+  if(!r.ok){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
+  if(!r.dates.length){
+    c.innerHTML='<div class="empty"><div class="ei">📦</div><div>Belum ada data stock opname</div></div>'; return;
+  }
+  window._sovDate=r.date; window._sov=r;
+
+  var rows=r.rows||[];
+  var noPrice=rows.filter(function(x){return x.no_price;});
+  c.innerHTML='<div class="card">'+
+    '<div class="card-title">💰 Cek Value Stock Opname</div>'+
+    '<div class="form-grid"><div class="fg"><label>Tanggal Opname</label>'+
+      '<select class="fi2" id="sov-date" onchange="window._sovDate=this.value;renderPage(\'so-value\')">'+
+      r.dates.map(function(d){return '<option value="'+d+'"'+(d===r.date?' selected':'')+'>'+fmtDateShort(d)+'</option>';}).join('')+
+      '</select></div></div>'+
+    '<div style="margin-top:14px;padding:14px 16px;background:var(--brown-deep);color:#fff;border-radius:12px">'+
+      '<div style="font-size:12px;opacity:.8">Total nilai stok · '+fmtDateShort(r.date)+'</div>'+
+      '<div style="font-size:24px;font-weight:800;margin-top:2px">Rp '+Number(r.total).toLocaleString('id-ID')+'</div>'+
+      '<div style="font-size:11.5px;opacity:.75;margin-top:3px">'+rows.length+' bahan ter-opname</div>'+
+    '</div>'+
+    (noPrice.length?('<div style="margin-top:10px;font-size:12px;line-height:1.55;background:#FFF6F4;border:1px solid #F3C9C0;color:#9A3A28;border-radius:8px;padding:9px 12px">'+
+      '⚠️ <b>'+noPrice.length+' bahan belum punya harga</b> di ING MASTER, jadi nilainya belum masuk hitungan: '+
+      mEsc(noPrice.map(function(x){return x.name;}).join(', '))+'</div>'):'')+
+  '</div>'+
+  '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+    '<div class="card-title" style="margin:0">📋 Rincian</div>'+
+    '<button class="ftab" style="padding:6px 14px" onclick="exportSOV()">⬇️ CSV</button></div>'+
+    '<div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="tbl" style="min-width:560px">'+
+    '<thead><tr><th>Bahan</th><th style="text-align:right">Qty</th><th style="text-align:right">Harga</th><th style="text-align:right">Nilai</th></tr></thead><tbody>'+
+    rows.map(function(x){
+      var hargaTxt = x.no_price
+        ? '<span style="color:var(--red);font-size:11.5px">harga belum diisi</span>'
+        : ('Rp '+Number(x.price).toLocaleString('id-ID')+(x.full_pax>0?('<div style="font-size:11px;color:var(--brown-soft);font-weight:400">/ '+Number(x.full_pax).toLocaleString('id-ID')+' '+mEsc(x.unit||'')+'</div>'):''));
+      return '<tr>'+
+        '<td style="font-weight:600">'+mEsc(x.name)+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+Number(x.qty).toLocaleString('id-ID')+' '+mEsc(x.unit||'')+'</td>'+
+        '<td style="text-align:right;white-space:nowrap">'+hargaTxt+'</td>'+
+        '<td style="text-align:right;font-weight:700;white-space:nowrap'+(x.no_price?';color:var(--line)':'')+'">'+(x.no_price?'—':'Rp '+Number(x.value).toLocaleString('id-ID'))+'</td>'+
+      '</tr>';
+    }).join('')+
+    '</tbody><tfoot><tr>'+
+      '<td colspan="3" style="text-align:right;font-weight:800;background:var(--surface2)">TOTAL</td>'+
+      '<td style="text-align:right;font-weight:800;background:var(--surface2);white-space:nowrap">Rp '+Number(r.total).toLocaleString('id-ID')+'</td>'+
+    '</tr></tfoot></table></div></div>';
+}
+window.renderSOValue=renderSOValue;
+
+function exportSOV(){
+  var r=window._sov;
+  if(!r||!r.rows||!r.rows.length){ alert('Belum ada data untuk diunduh'); return; }
+  var lines=[['Bahan','Qty','Satuan','Isi per pack','Harga per pack','Nilai'].join(',')];
+  r.rows.forEach(function(x){
+    lines.push(['"'+String(x.name).replace(/"/g,'""')+'"',x.qty,'"'+(x.unit||'')+'"',
+      x.full_pax||'',x.no_price?'':x.price,x.no_price?'':x.value].join(','));
+  });
+  lines.push(['"TOTAL"','','','','',r.total].join(','));
+  var blob=new Blob(['\ufeff'+lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='value-stock-opname_'+r.date+'.csv';
+  a.click();
+}
+window.exportSOV=exportSOV;
 
 </script>
 </body>
