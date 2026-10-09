@@ -631,12 +631,29 @@ function greetNotif(){
 }
 window.greetNotif=greetNotif;
 
+function invOverdueBlock(){
+  var r=NOTIF.overdue;
+  if(!r||!r.n_overdue) return '';
+  return '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--brown-soft);margin:'+((NOTIF.nAppr||NOTIF.nDec)?'14px':'0')+' 0 4px">Invoice lewat jatuh tempo</div>'+
+    r.list.slice(0,6).map(function(z){
+      return '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'+
+        '<div style="font-weight:600;font-size:13px">'+mEsc(z.invoice_no)+' — '+mEsc(z.store_name)+'</div>'+
+        '<div style="font-size:11.5px;color:var(--brown-soft)">Rp '+Number(z.grand_total).toLocaleString('id-ID')+
+        ' · jatuh tempo '+fmtDateShort(z.due_date)+' · <b style="color:var(--red)">telat '+z.days_late+' hari</b></div></div>';
+    }).join('')+
+    (r.n_overdue>6?('<div style="font-size:11.5px;color:var(--brown-soft);padding:6px 0">+'+(r.n_overdue-6)+' lagi</div>'):'')+
+    '<button class="save-btn" style="width:100%;margin-top:12px" onclick="closePopup();navigateTo(\'invoice\');setTimeout(function(){INV._listPay=\'Overdue\';invSwitch(\'list\');},350)">💳 Buka Invoice Overdue</button>';
+}
+
 function openNotif(){
   if(!NOTIF.count){
     showPopup('Notifikasi','<div class="empty" style="padding:26px"><div class="ei">🔕</div><div>Tidak ada notifikasi baru</div></div>');
     return;
   }
   var body='';
+  if(!NOTIF.nAppr&&!NOTIF.nDec&&NOTIF.overdue&&NOTIF.overdue.n_overdue){
+    showPopup('Notifikasi',invOverdueBlock()); return;
+  }
   if(NOTIF.nAppr){
     var a=NOTIF.appr;
     function pendRow(label,extra){
@@ -666,6 +683,7 @@ function openNotif(){
       (d.clockfix||[]).map(function(z){return decRow((z.clock_type==='in'?'Clock In':'Clock Out')+' '+z.time,'Koreksi',z);}).join('')+
       '<button class="save-btn" style="width:100%;margin-top:12px'+(NOTIF.nAppr?';background:var(--gold)':'')+'" onclick="closePopup();showMyDecisions()">📄 Cek Detail</button>';
   }
+  body+=invOverdueBlock();
   showPopup('Notifikasi',body);
 }
 window.openNotif=openNotif;
@@ -726,7 +744,7 @@ window.openChangePassword=openChangePassword;
 
 async function submitChangePassword(){
   var msg=document.getElementById('cp-msg');
-  function err(t){ if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
+  function err(t){ busyDone('inv.save'); busyDone('sj.save'); if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
   var o=(document.getElementById('cp-old')||{}).value||'';
   var n=(document.getElementById('cp-new')||{}).value||'';
   var n2=(document.getElementById('cp-new2')||{}).value||'';
@@ -1035,6 +1053,7 @@ async function renderDashboard(c){
   if(canTab('inbound')) bits.push({ico:'📥',lbl:'Inbound',val:(Number(sd.inboundToday||0))+' catatan',ok:Number(sd.inboundToday||0)>0,go:'inbound'});
   if(canTab('produksi')) bits.push({ico:'🏭',lbl:'Hasil Produksi',val:(Number(sd.produksiToday||0))+' item',ok:Number(sd.produksiToday||0)>0,go:'produksi'});
   if(canTab('cek-absensi')) bits.push({ico:'👥',lbl:'Hadir hari ini',val:(Number(sd.absensiCount||0))+' orang',ok:Number(sd.absensiCount||0)>0,go:'cek-absensi'});
+  if(canTab('invoice')) invDashOutstanding();
   if(canTab('izin-approval')&&isApprover()) bits.push({ico:'📝',lbl:(S.user.role==='PIC'?'Perlu kamu cek':'Menunggu keputusan'),val:NOTIF.nAppr+' pengajuan',ok:NOTIF.nAppr===0,go:'izin-approval'});
 
   if(!bits.length){ box.innerHTML=''; return; }
@@ -1047,6 +1066,39 @@ async function renderDashboard(c){
     }).join('')+'</div>';
 }
 window.renderDashboard=renderDashboard;
+
+// Kartu piutang & invoice lewat jatuh tempo (Owner/Admin). Dimuat terpisah
+// supaya dashboard tetap tampil cepat walau invoice sudah banyak.
+async function invDashOutstanding(){
+  var box=document.getElementById('d-status'); if(!box) return;
+  try{
+    var r=await api({action:'getInvoiceOutstanding',token:S.token,store:S.store});
+    if(!r||!r.ok||!r.n_outstanding) return;
+    var el=document.createElement('div');
+    el.innerHTML='<div class="sec" style="margin-top:16px">💳 Piutang Invoice</div>'+
+      '<div class="kpi-grid">'+
+      '<div class="kpi'+(r.outstanding?' dark':'')+'" style="cursor:pointer" onclick="navigateTo(\'invoice\');setTimeout(function(){INV._listPay=\'Belum Lunas\';invSwitch(\'list\');},350)">'+
+        '<div class="kpi-label">Belum Dibayar</div><div class="kpi-val" style="font-size:19px">Rp '+Number(r.outstanding).toLocaleString('id-ID')+'</div>'+
+        '<div class="kpi-sub">'+r.n_outstanding+' invoice</div></div>'+
+      (r.n_overdue?('<div class="kpi" style="border-color:#F3C9C0;background:#FFF6F4;cursor:pointer" onclick="navigateTo(\'invoice\');setTimeout(function(){INV._listPay=\'Overdue\';invSwitch(\'list\');},350)">'+
+        '<div class="kpi-label" style="color:#9A3A28">⚠️ Lewat Jatuh Tempo</div>'+
+        '<div class="kpi-val" style="font-size:19px;color:#9A3A28">Rp '+Number(r.overdue).toLocaleString('id-ID')+'</div>'+
+        '<div class="kpi-sub" style="color:#9A3A28">'+r.n_overdue+' invoice · '+mEsc(String(r.list[0].store_name))+' telat '+r.list[0].days_late+' hari</div></div>'):'')+
+      '</div>';
+    box.appendChild(el);
+    window._invOverdue=r;
+    if(r.n_overdue) invOverdueBell(r);
+  }catch(e){}
+}
+window.invDashOutstanding=invDashOutstanding;
+
+// Sisipkan invoice overdue ke lonceng notifikasi.
+function invOverdueBell(r){
+  NOTIF.overdue=r;
+  NOTIF.count=(NOTIF.count||0)+r.n_overdue;
+  renderNotifBadge();
+}
+window.invOverdueBell=invOverdueBell;
 
 
 // ---- jam WIB ----
@@ -1461,6 +1513,7 @@ function inbCalc(i){
 window.inbCalc=inbCalc;
 
 async function saveInbound(){
+  if(!busyGuard('inbound.save')) return;   // sedang menyimpan
   var btn=document.querySelector('#content .save-btn');
   var msg=document.getElementById('inb-msg');
   var items=[];
@@ -1471,7 +1524,7 @@ async function saveInbound(){
   });
   if(!items.length){
     if(msg){msg.textContent='❌ Belum ada bahan yang diisi qty-nya';msg.className='save-msg err';}
-    return;
+    busyDone('inbound.save'); return;
   }
   if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
   try{
@@ -1486,6 +1539,7 @@ async function saveInbound(){
       setTimeout(function(){ renderPage('inbound'); },1000);
     } else if(msg){ msg.textContent='❌ '+(r.error||'Error');msg.className='save-msg err'; }
   }catch(e){ if(msg){msg.textContent='❌ '+e.message;msg.className='save-msg err';} }
+  busyDone('inbound.save');
   if(btn){btn.disabled=false;btn.textContent='Simpan Inbound';}
 }
 window.saveInbound=saveInbound;
@@ -1665,6 +1719,7 @@ function unlockProd(){ window._prodLocked=false; renderProdTable(); }
 window.unlockProd=unlockProd;
 
 async function saveProduksi(){
+  if(!busyGuard('produksi.save')) return;   // sedang menyimpan
   var btn=document.querySelector('#content .save-btn');
   var msg=document.getElementById('pr-msg');
   var date=window._prodDate||S.today;
@@ -1676,7 +1731,7 @@ async function saveProduksi(){
   });
   if(!items.length){
     if(msg){msg.textContent='❌ Belum ada angka yang diisi';msg.className='save-msg err';}
-    return;
+    busyDone('produksi.save'); return;
   }
   if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
   try{
@@ -1689,6 +1744,7 @@ async function saveProduksi(){
       setTimeout(renderProdTable,900);
     } else if(msg){ msg.textContent='❌ '+(r.error||'Error');msg.className='save-msg err'; }
   }catch(e){ if(msg){msg.textContent='❌ '+e.message;msg.className='save-msg err';} }
+  busyDone('produksi.save');
   if(btn){btn.disabled=false;btn.textContent='Simpan Hasil Produksi';}
 }
 window.saveProduksi=saveProduksi;
@@ -2209,7 +2265,7 @@ window.izJenisHint=izJenisHint;
 
 async function saveIzin(){
   var msg=document.getElementById('iz-msg');
-  function err(t){ if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
+  function err(t){ busyDone('inv.save'); busyDone('sj.save'); if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
   var date=(document.getElementById('iz-date')||{}).value||'';
   var jenis=(document.getElementById('iz-jenis')||{}).value||'';
   var ket=((document.getElementById('iz-ket')||{}).value||'').trim();
@@ -3261,6 +3317,18 @@ function getLogoDataUrl(){
 //   Diskon memotong subtotal barang (bukan delivery fee)
 //   PDF: hal.1 summary gabungan · hal.2 lampiran detail per tanggal
 // =========================================================
+// Pagar klik-ganda: aksi simpan yang sedang jalan tidak bisa dipicu lagi,
+// walau tombolnya sempat ter-klik dua kali atau request-nya lambat.
+var _busy={};
+function busyGuard(key){
+  if(_busy[key]) return false;
+  _busy[key]=true;
+  setTimeout(function(){ _busy[key]=false; },30000);   // jaring pengaman kalau ada yg nyangkut
+  return true;
+}
+function busyDone(key){ _busy[key]=false; }
+window.busyGuard=busyGuard; window.busyDone=busyDone;
+
 var INV={stores:[],items:[],pricelists:[],orders:[],disc:{type:'pct',value:''},editNo:null,saved:null,tab:'form',due:30,_store:null};
 var INV_CO={
   name:'PT SUKA SEGAR INDONESIA',
@@ -3276,11 +3344,17 @@ function invPlLabel(id){ var x=INV.pricelists.filter(function(p){return p.id===i
 function invNewOrder(date,pl){ return {date:date||S.today,pl:pl||(INV.pricelists[0]||{}).id||'special',qty:{},fee:'',open:true,sj:null,sjEdited:false,sjQty:{}}; }
 
 async function renderInvoice(c){
+  // Harga ikut di sini, jadi cache lebih pendek (3 menit) daripada surat jalan.
+  if(INV._setupAt&&(Date.now()-INV._setupAt)<180000&&INV.items.length){
+    if(!INV.orders.length) INV.orders=[invNewOrder()];
+    c.innerHTML='<div id="inv-pills"></div><div id="inv-body"></div>';
+    invSwitch(INV.tab||'form'); return;
+  }
   c.innerHTML=LOADING;
   try{
     var r=await api({action:'getInvoiceSetup',token:S.token,store:S.store});
     if(!r.ok){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
-    INV.stores=r.stores||[]; INV.items=r.items||[]; INV.pricelists=r.pricelists||[]; INV.due=r.due_days||30;
+    INV.stores=r.stores||[]; INV.items=r.items||[]; INV.pricelists=r.pricelists||[]; INV.due=r.due_days||30; INV._setupAt=Date.now();
   }catch(e){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; return; }
   if(!INV.orders.length) INV.orders=[invNewOrder()];
   c.innerHTML='<div id="inv-pills"></div><div id="inv-body"></div>';
@@ -3369,17 +3443,21 @@ window.invStoreInfo=invStoreInfo;
 function invRenderOrders(){
   var el=document.getElementById('inv-orders'); if(!el) return;
   // kelompok CTG sekali saja
-  function groupsFor(pl){
+  function groupsFor(pl,o){
+    // Order dari surat jalan: tampilkan hanya barang yang ada qty-nya, biar
+    // tidak kepanjangan. Tombol "tampilkan semua" untuk menambah barang lain.
+    var ringkas = o && o.sj && !o.showAll;
     var g=[], gi={};
     INV.items.forEach(function(it,i){
       if(invPrice(it,pl)<=0) return;                 // tidak dijual di pricelist ini
+      if(ringkas && !((Number(o.qty[it.key])||0)>0)) return;
       if(gi[it.ctg]===undefined){ gi[it.ctg]=g.length; g.push({ctg:it.ctg,rows:[]}); }
       g[gi[it.ctg]].rows.push(i);
     });
     return g;
   }
   el.innerHTML=INV.orders.map(function(o,oi){
-    var groups=groupsFor(o.pl);
+    var groups=groupsFor(o.pl,o);
     var x=invOrderCalc(o);
     var head='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
       '<span style="font-weight:800;color:var(--brown-deep);min-width:64px">Order '+(oi+1)+'</span>'+
@@ -3396,7 +3474,8 @@ function invRenderOrders(){
     return '<div class="card">'+head+
       (o.sj?('<div style="margin-top:9px;font-size:12px;background:#EEF7EE;border:1px solid #BFE3C4;border-radius:8px;padding:8px 11px;line-height:1.5">'+
         '📄 Dari surat jalan <b>'+mEsc(o.sj)+'</b>'+(o.sjEdited?' · <span style="color:var(--orange);font-weight:700">qty diubah dari surat jalan</span>':'')+
-        ' <span style="text-decoration:underline;cursor:pointer;color:var(--brown-soft)" onclick="invClearSJ('+oi+')">lepas</span></div>'):'')+
+        '<br><span style="text-decoration:underline;cursor:pointer" onclick="invToggleAll('+oi+')">'+(o.showAll?'tampilkan hanya yang terisi':'tampilkan semua barang')+'</span>'+
+        ' · <span style="text-decoration:underline;cursor:pointer;color:var(--brown-soft)" onclick="invClearSJ('+oi+')">lepas surat jalan</span></div>'):'')+
       '<div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:10px"><table class="tbl" style="min-width:540px">'+
       '<thead><tr><th>Item</th><th style="text-align:right">Harga</th><th style="text-align:right">Jumlah</th><th style="text-align:right">Total</th></tr></thead><tbody>'+
       groups.map(function(g){
@@ -3466,32 +3545,44 @@ window.invQ=invQ; window.invToggle=invToggle; window.invAddOrder=invAddOrder; wi
 
 // ── Ambil order dari surat jalan yang sudah ada ──
 async function invPickSJ(oi){
+  // Cabang wajib dipilih dulu — supaya daftarnya hanya surat jalan cabang itu
+  // dan tidak mungkin salah ambil milik cabang lain.
+  var cur=(document.getElementById('inv-store')||{}).value||'';
+  if(!cur){
+    showPopup('Pilih cabang dulu',
+      '<div class="empty" style="padding:22px"><div class="ei">🏬</div>'+
+      '<div>Pilih <b>cabang</b> di bagian atas dulu, baru surat jalannya bisa dipilih.</div></div>'+
+      '<button class="save-btn" style="width:100%" onclick="closePopup();(document.getElementById(\'inv-store\')||{}).focus&&document.getElementById(\'inv-store\').focus()">Oke</button>');
+    return;
+  }
   showPopup('Pilih Surat Jalan','<div class="hg-wrap"><div class="hourglass"></div><div class="hg-txt">Memuat…</div></div>');
   var rows=[];
   try{
-    var r=await api({action:'getSJList',token:S.token,store:S.store});
+    // only_open: yang sudah ditagih tidak ikut sama sekali
+    var r=await api({action:'getSJList',token:S.token,store:S.store,only_open:'1',store_name:cur});
     if(!r.ok){ showPopup('Pilih Surat Jalan','<div class="empty" style="padding:22px"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'); return; }
-    rows=(r.data||[]).filter(function(x){return x.status!=='Dibatalkan';});
+    rows=(r.data||[]).filter(function(x){return x.status==='Belum Ditagih'&&x.store_name===cur;});
   }catch(e){ showPopup('Pilih Surat Jalan','<div class="empty" style="padding:22px"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'); return; }
+  // surat jalan yang sudah dipakai order lain di invoice ini juga disembunyikan
+  var dipakai={};
+  INV.orders.forEach(function(o,k){ if(o.sj&&k!==oi) dipakai[o.sj]=true; });
+  rows=rows.filter(function(x){ return !dipakai[x.sj_no]; });
   INV._sjList=rows;
   if(!rows.length){
-    showPopup('Pilih Surat Jalan','<div class="empty" style="padding:22px"><div class="ei">📭</div><div>Belum ada surat jalan</div></div>');
+    showPopup('Pilih Surat Jalan','<div class="empty" style="padding:22px"><div class="ei">📭</div>'+
+      '<div>Tidak ada surat jalan <b>'+mEsc(cur)+'</b> yang belum ditagih.<br>'+
+      '<span style="font-size:12px">Yang sudah ditagih tidak ditampilkan supaya tidak tertagih dua kali.</span></div></div>');
     return;
   }
-  var cur=(document.getElementById('inv-store')||{}).value||'';
-  showPopup('Pilih Surat Jalan',
-    '<div style="font-size:12px;color:var(--brown-soft);margin-bottom:10px">Barang dan tanggal terisi otomatis. Harga dan ongkir tetap kamu atur sendiri.</div>'+
+  showPopup('Pilih Surat Jalan — '+mEsc(cur),
+    '<div style="font-size:12px;color:var(--brown-soft);margin-bottom:10px">Hanya surat jalan cabang ini yang <b>belum ditagih</b>. Barang dan tanggal terisi otomatis; harga dan ongkir tetap kamu atur sendiri.</div>'+
     rows.map(function(x,i){
-      var beda=cur&&x.store_name!==cur;
-      var ditagih=x.status==='Sudah Ditagih';
       return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)">'+
         '<div style="flex:1;min-width:0">'+
           '<div style="font-weight:700;font-size:13px">'+mEsc(x.sj_no)+'</div>'+
-          '<div style="font-size:11.5px;color:var(--brown-soft)">'+fmtDateShort(x.sj_date)+' · '+mEsc(x.store_name)+' · '+x.item_count+' barang</div>'+
-          (ditagih?'<div style="font-size:11px;color:var(--green);font-weight:700;margin-top:2px">✓ sudah ditagih di '+mEsc(x.invoice_no)+'</div>':'')+
-          (beda?'<div style="font-size:11px;color:var(--orange);font-weight:700;margin-top:2px">⚠ cabang beda dari invoice ini</div>':'')+
+          '<div style="font-size:11.5px;color:var(--brown-soft)">'+fmtDateShort(x.sj_date)+' · '+x.item_count+' barang</div>'+
         '</div>'+
-        '<button class="save-btn" style="padding:6px 14px;font-size:12px;flex:none'+(ditagih?';background:var(--gold)':'')+'" onclick="invUseSJ('+oi+','+i+')">Pilih</button>'+
+        '<button class="save-btn" style="padding:6px 14px;font-size:12px;flex:none" onclick="invUseSJ('+oi+','+i+')">Pilih</button>'+
       '</div>';
     }).join(''));
 }
@@ -3499,7 +3590,6 @@ window.invPickSJ=invPickSJ;
 
 async function invUseSJ(oi,i){
   var x=(INV._sjList||[])[i]; if(!x) return;
-  if(x.status==='Sudah Ditagih'&&!confirm(x.sj_no+' sudah ditagih di '+x.invoice_no+'.\n\nTetap pakai? Surat jalan ini akan pindah ke invoice yang sekarang.')) return;
   closePopup();
   try{
     var r=await api({action:'getSJ',token:S.token,store:S.store,sj_no:x.sj_no});
@@ -3513,8 +3603,6 @@ async function invUseSJ(oi,i){
       if(invPrice(m,o.pl)<=0){ noPrice.push(it.description); return; }
       o.qty[it.item_key]=String(it.qty); o.sjQty[it.item_key]=String(it.qty);
     });
-    var sel=document.getElementById('inv-store');
-    if(sel&&!sel.value){ sel.value=r.sj.store_name; invStoreInfo(); }
     invRenderOrders(); invCalc();
     var notes=[];
     if(missing.length) notes.push('Tidak ada di RECAP, jadi tidak ikut:\n• '+missing.join('\n• '));
@@ -3524,8 +3612,11 @@ async function invUseSJ(oi,i){
 }
 window.invUseSJ=invUseSJ;
 
+function invToggleAll(oi){ INV.orders[oi].showAll=!INV.orders[oi].showAll; invRenderOrders(); invCalc(); }
+window.invToggleAll=invToggleAll;
+
 function invClearSJ(oi){
-  var o=INV.orders[oi]; o.sj=null; o.sjEdited=false; o.sjQty={};
+  var o=INV.orders[oi]; o.sj=null; o.sjEdited=false; o.sjQty={}; o.showAll=false;
   invRenderOrders(); invCalc();
 }
 window.invClearSJ=invClearSJ;
@@ -3580,8 +3671,9 @@ function invPeriodLabel(){
 }
 
 async function invSave(){
+  if(!busyGuard('inv.save')) return;   // sedang menyimpan
   var msg=document.getElementById('inv-msg'), btn=document.getElementById('inv-save');
-  function err(t){ if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
+  function err(t){ busyDone('inv.save'); busyDone('sj.save'); if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
   var store=(document.getElementById('inv-store')||{}).value;
   if(!store) return err('Pilih cabang dulu');
   var payload=[];
@@ -3599,9 +3691,10 @@ async function invSave(){
     var r=await api({action:'saveInvoice',token:S.token,store:S.store,invoice_no:INV.editNo||'',
       store_name:store,orders:JSON.stringify(payload),
       discount_type:(Number(INV.disc.value)>0?INV.disc.type:''),discount_value:INV.disc.value||0});
-    if(r.ok){ INV.saved={invoice:r.invoice,items:r.items,edited:r.edited}; invRenderSaved(); return; }
+    if(r.ok){ busyDone('inv.save'); INV.saved={invoice:r.invoice,items:r.items,edited:r.edited}; invRenderSaved(); return; }
     err(r.error||'Gagal menyimpan');
   }catch(e){ err(e.message); }
+  busyDone('inv.save');
   if(btn){btn.disabled=false;btn.textContent=INV.editNo?'💾 Simpan Perubahan':'💾 Simpan Invoice';}
 }
 window.invSave=invSave;
@@ -3623,36 +3716,142 @@ function invRenderSaved(){
 async function invRenderList(){
   var box=document.getElementById('inv-body'); if(!box) return;
   var m=INV._listMonth||S.today.slice(0,7);
-  box.innerHTML='<div class="card"><div class="form-grid"><div class="fg"><label>Bulan</label>'+
-    '<input class="fi2" type="month" id="inv-month" value="'+m+'" onchange="INV._listMonth=this.value;invRenderList()"></div></div></div>'+
+  var mode=INV._listMode||'month';
+  var from=INV._from2||S.today.slice(0,8)+'01', to=INV._to2||S.today;
+  function tab(id,lbl){
+    var a=mode===id;
+    return '<button onclick="INV._listMode=\''+id+'\';invRenderList()" style="padding:7px 14px;border:1.5px solid '+(a?'var(--brown-deep)':'var(--line)')+';background:'+(a?'var(--brown-deep)':'var(--surface)')+';color:'+(a?'#fff':'var(--brown-deep)')+';border-radius:8px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">'+lbl+'</button>';
+  }
+  box.innerHTML='<div class="card">'+
+    '<div style="display:flex;gap:8px;margin-bottom:12px">'+tab('month','Per Bulan')+tab('range','Rentang Tanggal')+'</div>'+
+    '<div class="form-grid">'+
+      (mode==='month'
+        ? '<div class="fg"><label>Bulan</label><input class="fi2" type="month" id="inv-month" value="'+m+'" onchange="INV._listMonth=this.value;invRenderList()"></div>'
+        : '<div class="fg"><label>Dari Tanggal</label><input class="fi2" type="date" id="inv-f2" value="'+from+'" onchange="INV._from2=this.value;invRenderList()"></div>'+
+          '<div class="fg"><label>Sampai Tanggal</label><input class="fi2" type="date" id="inv-t2" value="'+to+'" onchange="INV._to2=this.value;invRenderList()"></div>')+
+      '<div class="fg"><label>Cabang</label><select class="fi2" id="inv-fstore" onchange="INV._listStore=this.value;invRenderList()">'+
+        '<option value="">— Semua cabang —</option>'+
+        (INV.stores||[]).map(function(st){return '<option value="'+mEsc(st.name)+'"'+(INV._listStore===st.name?' selected':'')+'>'+mEsc(st.name)+'</option>';}).join('')+
+      '</select></div>'+
+      '<div class="fg"><label>Status Bayar</label><select class="fi2" id="inv-fpay" onchange="INV._listPay=this.value;invRenderList()">'+
+        ['','Belum Lunas','Lunas','Overdue'].map(function(v){
+          return '<option value="'+v+'"'+(INV._listPay===v?' selected':'')+'>'+(v||'— Semua —')+'</option>';}).join('')+
+      '</select></div>'+
+    '</div></div>'+
     '<div id="inv-list">'+LOADING+'</div>';
   var el=document.getElementById('inv-list');
   try{
-    var r=await api({action:'getInvoiceList',token:S.token,store:S.store,month:m});
+    var q={action:'getInvoiceList',token:S.token,store:S.store,
+      store_name:INV._listStore||'',pay:INV._listPay||''};
+    if(mode==='range'){ q.from=from; q.to=to; } else { q.month=m; }
+    var r=await api(q);
     if(!r.ok){ el.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
     var rows=r.data||[]; INV._list=rows;
-    if(!rows.length){ el.innerHTML='<div class="empty"><div class="ei">📭</div><div>Belum ada invoice di bulan ini</div></div>'; return; }
-    var aktif=rows.filter(function(x){return x.status!=='Dibatalkan';});
-    var tot=aktif.reduce(function(t,x){return t+x.grand_total;},0);
-    el.innerHTML='<div class="card"><div style="font-size:12.5px;color:var(--brown-soft);margin-bottom:10px">'+aktif.length+' invoice aktif · total <b style="color:var(--brown-deep)">'+invRp(tot)+'</b></div>'+
-      '<div class="tbl-wrap" style="overflow-x:auto"><table class="tbl" style="min-width:660px"><thead><tr>'+
-      '<th>No. Invoice</th><th>Tanggal</th><th>Cabang</th><th>Periode</th><th style="text-align:right">Total</th><th></th></tr></thead><tbody>'+
+    if(r.stores&&r.stores.length&&!(INV.stores||[]).length) INV.stores=r.stores.map(function(n){return{name:n};});
+    var s=r.summary||{total:0,lunas:0,belum:0,overdue:0,n_overdue:0,n_belum:0};
+
+    var kartu='<div class="card"><div class="kpi-grid" style="margin:0">'+
+      '<div class="kpi"><div class="kpi-label">Total Tertagih</div><div class="kpi-val" style="font-size:19px">'+invRp(s.total)+'</div><div class="kpi-sub">'+(r.total||rows.length)+' invoice</div></div>'+
+      '<div class="kpi"><div class="kpi-label">Sudah Dibayar</div><div class="kpi-val" style="font-size:19px;color:var(--green)">'+invRp(s.lunas)+'</div></div>'+
+      '<div class="kpi'+(s.belum?' dark':'')+'"><div class="kpi-label">Belum Dibayar</div><div class="kpi-val" style="font-size:19px">'+invRp(s.belum)+'</div><div class="kpi-sub">'+s.n_belum+' invoice</div></div>'+
+      (s.n_overdue?('<div class="kpi" style="border-color:#F3C9C0;background:#FFF6F4"><div class="kpi-label" style="color:#9A3A28">⚠️ Lewat Jatuh Tempo</div><div class="kpi-val" style="font-size:19px;color:#9A3A28">'+invRp(s.overdue)+'</div><div class="kpi-sub" style="color:#9A3A28;cursor:pointer;text-decoration:underline" onclick="INV._listPay=\'Overdue\';invRenderList()">'+s.n_overdue+' invoice · lihat</div></div>'):'')+
+    '</div></div>';
+
+    if(!rows.length){ el.innerHTML=kartu+'<div class="empty"><div class="ei">📭</div><div>Tidak ada invoice untuk filter ini</div></div>'; return; }
+
+    el.innerHTML=kartu+'<div class="card">'+
+      '<div style="font-size:12.5px;color:var(--brown-soft);margin-bottom:10px">'+rows.length+' invoice'+
+        (r.truncated?(' <span style="color:var(--orange);font-weight:700">· menampilkan '+rows.length+' terbaru dari '+r.total+'. Persempit filternya untuk melihat sisanya.</span>'):'')+'</div>'+
+      '<div class="tbl-wrap" style="overflow-x:auto"><table class="tbl" style="min-width:860px"><thead><tr>'+
+      '<th>No. Invoice</th><th>Tanggal</th><th>Jatuh Tempo</th><th>Cabang</th><th style="text-align:right">Total</th><th>Pembayaran</th><th></th></tr></thead><tbody>'+
       rows.map(function(x,i){
         var batal=x.status==='Dibatalkan';
+        var lunas=x.payment_status==='Lunas';
+        var bayar = batal
+          ? '<span style="font-size:11.5px;color:var(--brown-soft)">—</span>'
+          : (lunas
+              ? '<span class="izin-badge" style="background:#EEF7EE;color:var(--green)">✓ Lunas</span>'+
+                (x.paid_date?'<div style="font-size:10.5px;color:var(--brown-soft);margin-top:2px">'+fmtDateShort(x.paid_date)+(x.paid_by?' · '+mEsc(x.paid_by):'')+'</div>':'')+
+                (x.payment_note?'<div style="font-size:10.5px;color:var(--brown-soft)">'+mEsc(x.payment_note)+'</div>':'')
+              : (x.overdue
+                  ? '<span class="izin-badge" style="background:#FFF0EE;color:var(--red)">⚠️ Telat '+x.days_late+' hari</span>'
+                  : '<span class="izin-badge" style="background:#FEF6E8;color:var(--gold)">⏳ Belum Lunas</span>'));
         return '<tr style="'+(batal?'opacity:.5':'')+'">'+
-          '<td style="font-weight:700;white-space:nowrap">'+mEsc(x.invoice_no)+(batal?'<div style="font-size:11px;color:var(--red);font-weight:700">DIBATALKAN</div>':'')+'</td>'+
+          '<td style="font-weight:700;white-space:nowrap">'+mEsc(x.invoice_no)+(batal?'<div style="font-size:11px;color:var(--red);font-weight:700">DIBATALKAN</div>':'')+
+            '<div style="font-size:10.5px;color:var(--brown-soft);font-weight:400;cursor:pointer;text-decoration:underline" onclick="invShowLog('+i+')">riwayat</div></td>'+
           '<td style="white-space:nowrap">'+fmtDateShort(x.invoice_date)+'</td>'+
+          '<td style="white-space:nowrap'+(x.overdue?';color:var(--red);font-weight:700':'')+'">'+fmtDateShort(x.due_date)+'</td>'+
           '<td>'+mEsc(x.store_name)+(x.order_count>1?'<div style="font-size:11px;color:var(--brown-soft)">'+x.order_count+' order</div>':'')+'</td>'+
-          '<td style="white-space:nowrap;font-size:12px">'+fmtDateShort(x.period_from)+' – '+fmtDateShort(x.period_to)+'</td>'+
           '<td style="text-align:right;font-weight:700;white-space:nowrap">'+invRp(x.grand_total)+'</td>'+
+          '<td style="white-space:nowrap">'+bayar+'</td>'+
           '<td style="white-space:nowrap">'+
             '<button class="ftab" style="padding:4px 9px;font-size:11.5px" onclick="invOpen('+i+',\'pdf\')">⬇️ PDF</button> '+
-            (batal?'':'<button class="ftab" style="padding:4px 9px;font-size:11.5px" onclick="invOpen('+i+',\'edit\')">✏️</button> '+
-            '<button class="ftab" style="padding:4px 9px;font-size:11.5px;color:var(--red)" onclick="invCancel('+i+')">Batalkan</button>')+
+            (batal?'':
+              '<button class="ftab" style="padding:4px 9px;font-size:11.5px'+(lunas?'':';color:var(--green);font-weight:700')+'" onclick="invPayForm('+i+')">'+(lunas?'↺ Batal lunas':'✓ Tandai lunas')+'</button> '+
+              '<button class="ftab" style="padding:4px 9px;font-size:11.5px" onclick="invOpen('+i+',\'edit\')">✏️</button> '+
+              '<button class="ftab" style="padding:4px 9px;font-size:11.5px;color:var(--red)" onclick="invCancel('+i+')">Batalkan</button>')+
           '</td></tr>';
       }).join('')+'</tbody></table></div></div>';
   }catch(e){ el.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; }
 }
+
+// ── Tandai pembayaran (finance) ──
+function invPayForm(i){
+  var x=(INV._list||[])[i]; if(!x) return;
+  if(x.payment_status==='Lunas'){
+    showPopup('Batalkan tanda lunas',
+      '<div style="font-size:13px;line-height:1.6;margin-bottom:12px">'+mEsc(x.invoice_no)+' · '+mEsc(x.store_name)+'<br>'+
+      'Ditandai lunas '+(x.paid_date?fmtDateShort(x.paid_date):'-')+(x.paid_by?(' oleh '+mEsc(x.paid_by)):'')+'.</div>'+
+      '<button class="save-btn" style="width:100%;background:var(--red)" onclick="invSetPay('+i+',\'Belum Lunas\')">↺ Jadikan Belum Lunas</button>'+
+      '<button class="ftab" style="width:100%;margin-top:8px;padding:9px" onclick="closePopup()">Batal</button>');
+    return;
+  }
+  showPopup('Tandai Lunas',
+    '<div style="font-size:13px;line-height:1.6;margin-bottom:12px">'+mEsc(x.invoice_no)+' · '+mEsc(x.store_name)+'<br>'+
+      'Nilai <b>'+invRp(x.grand_total)+'</b> · jatuh tempo '+fmtDateShort(x.due_date)+
+      (x.overdue?(' <span style="color:var(--red);font-weight:700">(telat '+x.days_late+' hari)</span>'):'')+'</div>'+
+    '<div class="fg"><label>Tanggal Bayar</label><input class="fi2" type="date" id="pay-date" value="'+S.today+'" max="'+S.today+'"></div>'+
+    '<div class="fg" style="margin-top:8px"><label>Catatan <span style="font-weight:400;color:var(--brown-soft)">(opsional)</span></label>'+
+      '<input class="fi2" id="pay-note" placeholder="mis. transfer BCA 12 Okt" maxlength="200"></div>'+
+    '<button class="save-btn" style="width:100%;margin-top:12px" onclick="invSetPay('+i+',\'Lunas\')">✓ Simpan</button>'+
+    '<button class="ftab" style="width:100%;margin-top:8px;padding:9px" onclick="closePopup()">Batal</button>');
+}
+window.invPayForm=invPayForm;
+
+async function invSetPay(i,st){
+  var x=(INV._list||[])[i]; if(!x) return;
+  var dEl=document.getElementById('pay-date'), nEl=document.getElementById('pay-note');
+  closePopup();
+  try{
+    var r=await api({action:'setInvoicePayment',token:S.token,store:S.store,invoice_no:x.invoice_no,
+      payment_status:st,paid_date:(dEl?dEl.value:'')||'',note:(nEl?nEl.value:'')||''});
+    if(!r.ok){ alert('❌ '+(r.error||'Gagal')); return; }
+    invRenderList();
+  }catch(e){ alert('❌ '+e.message); }
+}
+window.invSetPay=invSetPay;
+
+// ── Riwayat perubahan invoice ──
+async function invShowLog(i){
+  var x=(INV._list||[])[i]; if(!x) return;
+  showPopup('Riwayat '+x.invoice_no,'<div class="hg-wrap"><div class="hourglass"></div><div class="hg-txt">Memuat…</div></div>');
+  try{
+    var r=await api({action:'getInvoiceLog',token:S.token,store:S.store,invoice_no:x.invoice_no});
+    if(!r.ok){ showPopup('Riwayat','<div class="empty" style="padding:22px"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'); return; }
+    var rows=r.data||[];
+    if(!rows.length){ showPopup('Riwayat '+x.invoice_no,'<div class="empty" style="padding:22px"><div class="ei">📭</div><div>Belum ada catatan perubahan.<br><span style="font-size:12px">Invoice ini dibuat sebelum fitur riwayat ada.</span></div></div>'); return; }
+    var warna={BUAT:'var(--green)',EDIT:'var(--gold)',BATAL:'var(--red)','TANDAI LUNAS':'var(--green)','TANDAI BELUM LUNAS':'var(--orange)'};
+    showPopup('Riwayat '+x.invoice_no,
+      rows.map(function(z){
+        return '<div style="padding:9px 0;border-bottom:1px solid var(--line)">'+
+          '<div style="font-weight:700;font-size:12.5px;color:'+(warna[z.action]||'var(--brown-deep)')+'">'+mEsc(z.action)+'</div>'+
+          '<div style="font-size:11.5px;color:var(--brown-soft)">'+mEsc(z.at)+(z.by?(' · '+mEsc(z.by)):'')+'</div>'+
+          (z.detail?('<div style="font-size:11.5px;margin-top:2px">'+mEsc(z.detail)+'</div>'):'')+
+        '</div>';
+      }).join(''));
+  }catch(e){ showPopup('Riwayat','<div class="empty" style="padding:22px"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'); }
+}
+window.invShowLog=invShowLog;
 
 async function invOpen(i,mode){
   var x=(INV._list||[])[i]; if(!x) return;
@@ -3768,8 +3967,15 @@ function buildInvoicePdf(h,items){
   }
   rkv('No. Invoice',h.invoice_no,36); rkv('Tanggal',tgl(h.invoice_date),41);
   rkv('Jatuh Tempo',tgl(h.due_date),46); rkv('Periode',tgl(h.period_from)+' - '+tgl(h.period_to),51);
+  // Nomor surat jalan yang ditagih di invoice ini
+  var sjList=[];
+  items.forEach(function(x){ if(x.sj_no&&sjList.indexOf(x.sj_no)<0) sjList.push(x.sj_no); });
+  if(sjList.length){
+    var txt=sjList.length<=2?sjList.join(', '):(sjList.length+' surat jalan (rincian di lampiran)');
+    rkv('Surat Jalan',txt,56);
+  }
 
-  var y=62;
+  var y=sjList.length?67:62;
   doc.setDrawColor(LINE[0],LINE[1],LINE[2]); doc.setLineWidth(0.3); doc.line(M,y-3,W-M,y-3);
   doc.setFont('helvetica','bold'); doc.setFontSize(8.3); doc.setTextColor(SOFT[0],SOFT[1],SOFT[2]);
   doc.text('DITAGIHKAN KEPADA',M,y+2);
@@ -3842,7 +4048,8 @@ function buildInvoicePdf(h,items){
     var byNo={}, nos=[];
     items.forEach(function(x){
       var k=Number(x.order_no)||0;
-      if(!byNo[k]){ byNo[k]={date:x.order_date,items:[],fee:0}; nos.push(k); }
+      if(!byNo[k]){ byNo[k]={date:x.order_date,items:[],fee:0,sj:x.sj_no||''}; nos.push(k); }
+      if(!byNo[k].sj&&x.sj_no) byNo[k].sj=x.sj_no;
       if(x.type==='DELIVERY') byNo[k].fee+=Number(x.amount)||0; else byNo[k].items.push(x);
     });
     nos.sort(function(a,b){ var da=byNo[a].date||'', db=byNo[b].date||''; return da===db?a-b:(da<db?-1:1); });
@@ -3852,7 +4059,7 @@ function buildInvoicePdf(h,items){
     var ROW=7.2, HEAD=8.5, BOTTOM=280, curY=32, needHead=true;
     nos.forEach(function(k,idx){
       var o=byNo[k], sub=0, m=0, body=[];
-      body.push([{content:tgl(o.date)+'   ·   Order '+(idx+1),colSpan:5,
+      body.push([{content:tgl(o.date)+'   ·   Order '+(idx+1)+(o.sj?('   ·   '+o.sj):''),colSpan:5,
         styles:{fillColor:CREAM,fontStyle:'bold',textColor:ESP,fontSize:9,halign:'left'}}]);
       o.items.forEach(function(x){
         m++; sub+=Number(x.amount)||0;
@@ -3965,11 +4172,17 @@ window.exportSOV=exportSOV;
 var SJ={stores:[],items:[],qty:{},editNo:null,saved:null,tab:'form',_store:null,_date:null,_notes:''};
 
 async function renderSuratJalan(c){
+  // Daftar cabang & barang jarang berubah — disimpan 10 menit supaya buka tab
+  // berulang kali (puluhan surat jalan sehari) tidak menembak server terus.
+  if(SJ._setupAt&&(Date.now()-SJ._setupAt)<600000&&SJ.items.length){
+    c.innerHTML='<div id="sj-pills"></div><div id="sj-body"></div>';
+    sjSwitch(SJ.tab||'form'); return;
+  }
   c.innerHTML=LOADING;
   try{
     var r=await api({action:'getSJSetup',token:S.token,store:S.store});
     if(!r.ok){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
-    SJ.stores=r.stores||[]; SJ.items=r.items||[];
+    SJ.stores=r.stores||[]; SJ.items=r.items||[]; SJ._setupAt=Date.now();
   }catch(e){ c.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; return; }
   c.innerHTML='<div id="sj-pills"></div><div id="sj-body"></div>';
   sjSwitch(SJ.tab||'form');
@@ -4074,8 +4287,9 @@ function sjFilter(){
 window.sjFilter=sjFilter;
 
 async function sjSave(){
+  if(!busyGuard('sj.save')) return;   // sedang menyimpan
   var msg=document.getElementById('sj-msg'), btn=document.getElementById('sj-save');
-  function err(t){ if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
+  function err(t){ busyDone('inv.save'); busyDone('sj.save'); if(msg){msg.textContent='❌ '+t;msg.className='save-msg err';} }
   var store=(document.getElementById('sj-store')||{}).value;
   var date=(document.getElementById('sj-date')||{}).value;
   SJ._notes=(document.getElementById('sj-notes')||{}).value||'';
@@ -4088,9 +4302,10 @@ async function sjSave(){
   try{
     var r=await api({action:'saveSJ',token:S.token,store:S.store,sj_no:SJ.editNo||'',
       date:date,store_name:store,notes:SJ._notes,lines:JSON.stringify(lines)});
-    if(r.ok){ SJ.saved={sj:r.sj,items:r.items,edited:r.edited}; sjRenderSaved(); return; }
+    if(r.ok){ busyDone('sj.save'); SJ.saved={sj:r.sj,items:r.items,edited:r.edited}; sjRenderSaved(); return; }
     err(r.error||'Gagal menyimpan');
   }catch(e){ err(e.message); }
+  busyDone('sj.save');
   if(btn){btn.disabled=false;btn.textContent=SJ.editNo?'💾 Simpan Perubahan':'💾 Simpan Surat Jalan';}
 }
 window.sjSave=sjSave;
@@ -4112,16 +4327,21 @@ function sjRenderSaved(){
 async function sjRenderList(){
   var box=document.getElementById('sj-body'); if(!box) return;
   var m=SJ._listMonth||S.today.slice(0,7);
-  box.innerHTML='<div class="card"><div class="form-grid"><div class="fg"><label>Bulan</label>'+
-    '<input class="fi2" type="month" id="sj-month" value="'+m+'" onchange="SJ._listMonth=this.value;sjRenderList()"></div></div></div>'+
+  box.innerHTML='<div class="card"><div class="form-grid">'+
+    '<div class="fg"><label>Bulan</label><input class="fi2" type="month" id="sj-month" value="'+m+'" onchange="SJ._listMonth=this.value;sjRenderList()"></div>'+
+    '<div class="fg"><label>Cabang</label><select class="fi2" id="sj-fstore" onchange="SJ._listStore=this.value;sjRenderList()">'+
+      '<option value="">— Semua cabang —</option>'+
+      SJ.stores.map(function(st){return '<option value="'+mEsc(st.name)+'"'+(SJ._listStore===st.name?' selected':'')+'>'+mEsc(st.name)+'</option>';}).join('')+
+    '</select></div></div></div>'+
     '<div id="sj-list">'+LOADING+'</div>';
   var el=document.getElementById('sj-list');
   try{
-    var r=await api({action:'getSJList',token:S.token,store:S.store,month:m});
+    var r=await api({action:'getSJList',token:S.token,store:S.store,month:m,store_name:SJ._listStore||''});
     if(!r.ok){ el.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
     var rows=r.data||[]; SJ._list=rows;
     if(!rows.length){ el.innerHTML='<div class="empty"><div class="ei">📭</div><div>Belum ada surat jalan di bulan ini</div></div>'; return; }
-    el.innerHTML='<div class="card"><div style="font-size:12.5px;color:var(--brown-soft);margin-bottom:10px">'+rows.length+' surat jalan</div>'+
+    el.innerHTML='<div class="card"><div style="font-size:12.5px;color:var(--brown-soft);margin-bottom:10px">'+rows.length+' surat jalan'+
+      (r.truncated?(' <span style="color:var(--orange);font-weight:700">· menampilkan '+rows.length+' terbaru dari '+r.total+'. Saring per cabang untuk melihat sisanya.</span>'):'')+'</div>'+
       '<div class="tbl-wrap" style="overflow-x:auto"><table class="tbl" style="min-width:680px"><thead><tr>'+
       '<th>No. Surat Jalan</th><th>Tanggal</th><th>Cabang</th><th>Status</th><th></th></tr></thead><tbody>'+
       rows.map(function(x,i){
