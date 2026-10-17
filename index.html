@@ -821,6 +821,7 @@ var NAV_DEFS = {
     {id:'so',ico:'📦',lbl:'Stock Opname',sec:''},
     {id:'inbound',ico:'📥',lbl:'Inbound',sec:''},
     {id:'produksi',ico:'🏭',lbl:'Hasil Produksi',sec:''},
+    {id:'ck-orders',ico:'📨',lbl:'Order dari Store',sec:''},
     {id:'surat-jalan',ico:'📄',lbl:'Surat Jalan',sec:''},
     {id:'izin-approval',ico:'📝',lbl:'Persetujuan',sec:'Monitoring'},
     {id:'cek-absensi',ico:'🕐',lbl:'Cek Absensi',sec:''},
@@ -834,7 +835,8 @@ var NAV_DEFS = {
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
     {id:'produksi-view',ico:'🏭',lbl:'Cek Hasil Produksi',sec:''},
     {id:'so-value',ico:'💰',lbl:'Cek Value SO',sec:''},
-    {id:'surat-jalan',ico:'📄',lbl:'Surat Jalan',sec:'Keuangan'},
+    {id:'ck-orders',ico:'📨',lbl:'Order dari Store',sec:'Keuangan'},
+    {id:'surat-jalan',ico:'📄',lbl:'Surat Jalan',sec:''},
     {id:'invoice',ico:'🧾',lbl:'Create Invoice',sec:''},
     {id:'payslip',ico:'🧾',lbl:'Generate Payslip',sec:'HR'},
     {id:'payslip-history',ico:'📄',lbl:'Riwayat Payslip',sec:''},
@@ -852,7 +854,8 @@ var NAV_DEFS = {
     {id:'inbound-view',ico:'🧾',lbl:'Cek Inbound',sec:''},
     {id:'produksi-view',ico:'🏭',lbl:'Cek Hasil Produksi',sec:''},
     {id:'so-value',ico:'💰',lbl:'Cek Value SO',sec:''},
-    {id:'surat-jalan',ico:'📄',lbl:'Surat Jalan',sec:'Keuangan'},
+    {id:'ck-orders',ico:'📨',lbl:'Order dari Store',sec:'Keuangan'},
+    {id:'surat-jalan',ico:'📄',lbl:'Surat Jalan',sec:''},
     {id:'invoice',ico:'🧾',lbl:'Create Invoice',sec:''},
   ]
 };
@@ -886,7 +889,7 @@ function buildNav(){
 function navigateTo(id){
   if(!canTab(id)){ id='dashboard'; }
   document.querySelectorAll('.ni').forEach(function(el){el.classList.toggle('active',el.dataset.id===id);});
-  var titles={dashboard:'Dashboard',absensi:'Absensi',wastage:'Wastage',so:'Stock Opname',inbound:'Inbound','inbound-view':'Cek Inbound','so-value':'Cek Value SO','surat-jalan':'Surat Jalan',invoice:'Create Invoice','wastage-view':'Wastage','cek-absensi':'Cek Absensi','overtime-rekap':'Rekap Overtime','izin-approval':'Persetujuan','payslip':'Generate Payslip','payslip-history':'Riwayat Payslip'};
+  var titles={dashboard:'Dashboard',absensi:'Absensi',wastage:'Wastage',so:'Stock Opname',inbound:'Inbound','inbound-view':'Cek Inbound','so-value':'Cek Value SO','ck-orders':'Order dari Store','surat-jalan':'Surat Jalan',invoice:'Create Invoice','wastage-view':'Wastage','cek-absensi':'Cek Absensi','overtime-rekap':'Rekap Overtime','izin-approval':'Persetujuan','payslip':'Generate Payslip','payslip-history':'Riwayat Payslip'};
   document.getElementById('tb-title').textContent=titles[id]||id;
   renderPage(id);
 }
@@ -964,6 +967,7 @@ async function renderPage(id){
     case 'produksi':        await renderProduksi(c); break;
     case 'produksi-view':   await renderProduksiView(c); break;
     case 'invoice':         await renderInvoice(c); break;
+    case 'ck-orders':       await renderCKOrders(c); break;
     case 'surat-jalan':     await renderSuratJalan(c); break;
     case 'so-value':        await renderSOValue(c); break;
     case 'wastage-view':    await renderWastageView(c); break;
@@ -4203,7 +4207,7 @@ function sjSwitch(t){
 }
 window.sjSwitch=sjSwitch;
 
-function sjNew(){ SJ.rows=[]; SJ.editNo=null; SJ.saved=null; SJ._store=null; SJ._date=null; SJ._notes=''; sjSwitch('form'); }
+function sjNew(){ SJ.rows=[]; SJ._po=null; SJ.editNo=null; SJ.saved=null; SJ._store=null; SJ._date=null; SJ._notes=''; sjSwitch('form'); }
 window.sjNew=sjNew;
 
 function sjRenderForm(){
@@ -4212,7 +4216,13 @@ function sjRenderForm(){
   if(!SJ.stores.length){ box.innerHTML='<div class="empty"><div class="ei">🏬</div><div>Belum ada cabang di sheet <b>TARGET</b></div></div>'; return; }
   if(!SJ.items.length){ box.innerHTML='<div class="empty"><div class="ei">📋</div><div>Belum ada barang di <b>RECAP</b></div></div>'; return; }
 
-  box.innerHTML='<div class="card">'+
+  box.innerHTML=
+    (SJ._po?'<div class="card" style="padding:12px 14px;background:#F2F7F2;border-color:#CBE0CB">'+
+      '<div style="font-size:12.5px;line-height:1.7">✉️ Dibuat dari <b>order '+mEsc(SJ._po.order_id)+'</b> · '+mEsc(SJ._po.store)+
+      '<br><span style="color:var(--brown-soft)">Jumlah pack sudah diisi sesuai pesanan — ubah dulu kalau yang dikirim beda. '+
+      'Order di app toko ditandai <b>Diproses</b> begitu surat jalan ini disimpan.</span>'+
+      '<br><span style="text-decoration:underline;cursor:pointer" onclick="sjUnlinkPO()">Lepas dari order ini</span></div></div>':'')+
+    '<div class="card">'+
     (SJ.editNo?'<div style="font-size:12.5px;background:#FEF6E8;border:1px solid #F1D9A8;border-radius:8px;padding:9px 12px;margin-bottom:12px">✏️ Mengedit <b>'+mEsc(SJ.editNo)+'</b> — nomor surat jalan tetap. <span style="text-decoration:underline;cursor:pointer" onclick="sjNew()">Batal edit</span></div>':'')+
     '<div class="form-grid">'+
       '<div class="fg"><label>Tanggal Kirim</label><input class="fi2" type="date" id="sj-date" value="'+(SJ._date||S.today)+'"></div>'+
@@ -4234,6 +4244,12 @@ function sjRenderForm(){
   '<div id="sj-msg" class="save-msg"></div></div>';
   sjStoreInfo(); sjRenderRows();
 }
+
+function sjUnlinkPO(){
+  if(!confirm('Lepas surat jalan ini dari order toko?\n\nOrder di app toko tidak akan ditandai Diproses.')) return;
+  SJ._po=null; sjRenderForm();
+}
+window.sjUnlinkPO=sjUnlinkPO;
 
 function sjStoreInfo(){
   var el=document.getElementById('sj-store-info'); if(!el) return;
@@ -4388,8 +4404,9 @@ async function sjSave(){
   if(btn){btn.disabled=true;btn.textContent='Menyimpan...';}
   try{
     var r=await api({action:'saveSJ',token:S.token,store:S.store,sj_no:SJ.editNo||'',
-      date:date,store_name:store,notes:SJ._notes,lines:JSON.stringify(lines)});
-    if(r.ok){ busyDone('sj.save'); SJ.saved={sj:r.sj,items:r.items,edited:r.edited}; sjRenderSaved(); return; }
+      date:date,store_name:store,notes:SJ._notes,lines:JSON.stringify(lines),
+      po_order_id:(SJ._po&&SJ._po.order_id)||''});
+    if(r.ok){ busyDone('sj.save'); SJ.saved={sj:r.sj,items:r.items,edited:r.edited,po:r.po,po_id:(SJ._po&&SJ._po.order_id)||''}; SJ._po=null; sjRenderSaved(); return; }
     err(r.error||'Gagal menyimpan');
   }catch(e){ err(e.message); }
   busyDone('sj.save');
@@ -4405,9 +4422,22 @@ function sjRenderSaved(){
     '<div style="font-size:16px;font-weight:800;color:var(--brown-deep);margin-top:6px">'+(SJ.saved.edited?'Perubahan tersimpan':'Surat jalan tersimpan')+'</div>'+
     '<div style="font-size:13px;color:var(--brown-soft);margin-top:4px">'+mEsc(h.sj_no)+' · '+mEsc(h.store_name)+' · '+fmtDateShort(h.sj_date)+'</div>'+
     '<div style="font-size:13px;color:var(--brown-deep);font-weight:700;margin:10px 0 16px">'+SJ.saved.items.length+' barang</div>'+
+    sjPoNote()+
     '<button class="save-btn" style="width:100%;max-width:320px" onclick="sjPdf(SJ.saved.sj,SJ.saved.items)">⬇️ Download PDF</button><br>'+
     '<button class="ftab" style="width:100%;max-width:320px;margin-top:8px;padding:9px" onclick="sjNew()">📄 Buat Surat Jalan Baru</button>'+
     '<div id="sj-pdf-msg" class="save-msg"></div></div>';
+}
+
+// Hasil tulis-balik ke app toko. Kalau gagal, surat jalannya TETAP tersimpan —
+// yang belum terjadi hanya penandaan di app toko, dan itu dibilang apa adanya.
+function sjPoNote(){
+  var id=SJ.saved.po_id, po=SJ.saved.po;
+  if(!id) return '';
+  if(po&&po.ok) return '<div style="font-size:12.5px;background:#F2F7F2;border:1px solid #CBE0CB;border-radius:8px;padding:9px 12px;margin-bottom:14px;text-align:left">'+
+    '✉️ Order <b>'+mEsc(id)+'</b> di app toko sudah ditandai <b>Diproses</b> dan jumlah kirimnya sudah dikirim balik.</div>';
+  return '<div style="font-size:12.5px;background:#FFF0EE;border:1px solid #F0C9C2;border-radius:8px;padding:9px 12px;margin-bottom:14px;text-align:left">'+
+    '⚠️ Surat jalan <b>tersimpan</b>, tapi order <b>'+mEsc(id)+'</b> di app toko <b>belum</b> ditandai Diproses'+
+    ((po&&po.error)?(': '+mEsc(po.error)):'.')+'<br>Toko belum bisa inbound sampai ini beres — coba buka lagi surat jalan ini lalu simpan ulang.</div>';
 }
 
 // ---------- Riwayat ----------
@@ -4471,6 +4501,7 @@ async function sjOpen(i,mode){
     });
     if(!SJ.rows.length) SJ.rows=[{key:'',pq:'',ps:'',sisa:''}];
     SJ.editNo=r.sj.sj_no; SJ.saved=null; SJ._store=r.sj.store_name; SJ._date=r.sj.sj_date; SJ._notes=r.sj.notes||'';
+    SJ._po=r.sj.po_order_id?{order_id:r.sj.po_order_id,store:r.sj.store_name,missing:[]}:null;
     sjSwitch('form');
     if(missing.length) alert('Barang ini sudah tidak ada di RECAP, jadi tidak ikut di form edit:\n• '+missing.join('\n• '));
   }catch(e){ alert('❌ '+e.message); }
@@ -4582,6 +4613,103 @@ function buildSJPdf(h,items){
   return doc;
 }
 window.buildSJPdf=buildSJPdf;
+
+// =========================================================
+// ORDER MASUK DARI STORE (channel CK di sheet PURCHASE_ORDER)
+//   Baca-saja di sini; perubahan ditulis saat surat jalannya disimpan.
+// =========================================================
+var CKO={list:[],tab:'Baru',busy:false};
+
+async function renderCKOrders(c){
+  c.innerHTML='<div id="cko-pills"></div><div id="cko-body"></div>';
+  ckoSwitch(CKO.tab||'Baru');
+}
+window.renderCKOrders=renderCKOrders;
+
+function ckoSwitch(st){
+  CKO.tab=st;
+  var el=document.getElementById('cko-pills'); if(!el) return;
+  function pill(id,lbl){
+    var a=CKO.tab===id;
+    return '<button onclick="ckoSwitch(\''+id+'\')" style="flex:1;padding:9px 4px;border:1.5px solid '+(a?'var(--brown-deep)':'var(--line)')+';background:'+(a?'var(--brown-deep)':'var(--surface)')+';color:'+(a?'#fff':'var(--brown-deep)')+';border-radius:10px;font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer">'+lbl+'</button>';
+  }
+  el.innerHTML='<div style="display:flex;gap:8px;margin-bottom:14px">'+
+    pill('Baru','📨 Order Baru')+pill('Diproses','✅ Sudah Diproses')+'</div>';
+  ckoLoad();
+}
+window.ckoSwitch=ckoSwitch;
+
+async function ckoLoad(){
+  var box=document.getElementById('cko-body'); if(!box) return;
+  box.innerHTML=LOADING;
+  try{
+    var r=await api({action:'getCKOrders',token:S.token,store:S.store,status:CKO.tab});
+    if(!r.ok){ box.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(r.error||'Error')+'</div></div>'; return; }
+    CKO.list=r.data||[];
+  }catch(e){ box.innerHTML='<div class="empty"><div class="ei">❌</div><div>'+mEsc(e.message)+'</div></div>'; return; }
+  if(!CKO.list.length){
+    box.innerHTML='<div class="empty"><div class="ei">'+(CKO.tab==='Baru'?'📭':'🗂️')+'</div><div>'+
+      (CKO.tab==='Baru'?'Belum ada order baru dari store.':'Belum ada order yang diproses.')+'</div></div>';
+    return;
+  }
+  box.innerHTML=CKO.list.map(function(o,i){
+    var baru=CKO.tab==='Baru';
+    return '<div class="card" style="padding:14px 16px">'+
+      '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">'+
+        '<div><div style="font-weight:800;color:var(--brown-deep);font-size:14px">'+mEsc(o.store)+'</div>'+
+        '<div style="font-size:12px;color:var(--brown-soft);margin-top:2px">'+mEsc(o.order_id)+'</div></div>'+
+        '<div style="text-align:right;font-size:12px;color:var(--brown-soft);white-space:nowrap">'+fmtDateShort(o.date)+'<br>'+mEsc(o.display_name||'')+'</div>'+
+      '</div>'+
+      '<div style="font-size:12.5px;color:var(--brown-deep);margin-top:9px"><b>'+o.item_count+' barang</b>'+
+        (o.preview&&o.preview.length?(' · <span style="color:var(--brown-soft)">'+o.preview.map(mEsc).join(', ')+(o.item_count>o.preview.length?', …':'')+'</span>'):'')+'</div>'+
+      (baru
+        ? '<button class="save-btn" style="width:100%;margin-top:12px" onclick="ckoProses('+i+')">📄 Buat Surat Jalan</button>'
+        : '<div style="font-size:12px;color:var(--brown-soft);margin-top:9px;line-height:1.7">Surat jalan: <b style="color:var(--brown-deep)">'+mEsc(o.do_id||'-')+'</b>'+
+          '<br>Invoice: '+(o.invoice_no?('<b style="color:var(--green)">'+mEsc(o.invoice_no)+'</b>'):'<span style="color:var(--gold)">belum ditagih</span>')+'</div>')+
+    '</div>';
+  }).join('');
+}
+window.ckoLoad=ckoLoad;
+
+// Buka order -> isi otomatis form Surat Jalan, lalu pindah tab.
+async function ckoProses(i){
+  var o=CKO.list[i]; if(!o) return;
+  if(!busyGuard('cko.open')) return;
+  try{
+    var r=await api({action:'getCKOrder',token:S.token,store:S.store,order_id:o.order_id});
+    if(!r.ok){ alert('❌ '+(r.error||'Gagal')); return; }
+    if(!r.store_found){
+      alert('Cabang "'+r.order.store+'" tidak ketemu di sheet TARGET.\nLengkapi dulu datanya supaya alamat & PIC surat jalan terisi.');
+      return;
+    }
+    // pastikan daftar barang CK sudah ada (dipakai buat mencocokkan nama)
+    if(!SJ.items.length){
+      var st=await api({action:'getSJSetup',token:S.token,store:S.store});
+      if(st.ok){ SJ.stores=st.stores||[]; SJ.items=st.items||[]; SJ.lastSize=st.last_size||{}; SJ._setupAt=Date.now(); }
+    }
+    var rows=[], missing=[];
+    (r.items||[]).forEach(function(x){
+      if(!x.key){ missing.push(x.name); return; }
+      rows.push({key:x.key,pq:x.qty||'',ps:x.fullPax||'',sisa:''});
+    });
+    if(!rows.length){
+      alert('Tidak ada barang order ini yang cocok dengan daftar barang CK (sheet RECAP):\n• '+missing.join('\n• '));
+      return;
+    }
+    SJ.rows=rows; SJ.editNo=null; SJ.saved=null;
+    SJ._store=r.store_name; SJ._date=r.order.date||S.today; SJ._notes='';
+    SJ._po={order_id:r.order.order_id,store:r.order.store,missing:missing};
+    SJ.tab='form';
+    navigateTo('surat-jalan');
+    if(missing.length) setTimeout(function(){
+      alert('Barang ini tidak ada di daftar CK (RECAP), jadi belum masuk surat jalan:\n• '+missing.join('\n• ')+
+            '\n\nKalau memang harus dikirim, tambahkan dulu di RECAP.');
+    },400);
+  }catch(e){ alert('❌ '+e.message); }
+  finally{ busyDone('cko.open'); }
+}
+window.ckoProses=ckoProses;
+
 
 </script>
 </body>
